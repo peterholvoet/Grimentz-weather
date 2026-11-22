@@ -19,6 +19,9 @@
   --accent-ink: #ffffff;
   --rain: #b15609;
   --night: rgba(19, 32, 45, 0.06);
+  --sun: #d98a00;
+  --drop: #3b7fc4;
+  --cloud: #8fa3b5;
   --font-body: 'IBM Plex Sans', system-ui, -apple-system, 'Segoe UI', sans-serif;
   --font-num: 'IBM Plex Mono', ui-monospace, Menlo, Consolas, monospace;
   color-scheme: light;
@@ -26,7 +29,7 @@
 @media (prefers-color-scheme: dark) {
   :root {
     --bg: #0d1520; --surface: #15212e; --ink: #e5edf5; --muted: #91a3b5; --line: #25354a;
-    --accent: #5aa9e6; --accent-ink: #06121e; --rain: #f0a35a; --night: rgba(255, 255, 255, 0.05);
+    --accent: #5aa9e6; --accent-ink: #06121e; --rain: #f0a35a; --night: rgba(255, 255, 255, 0.05); --sun: #f5b94a; --drop: #7db4ee; --cloud: #7d90a3;
     color-scheme: dark;
   }
 }
@@ -61,7 +64,18 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .day .amt small { font-size: 12px; color: var(--muted); margin-left: 3px; font-family: var(--font-body); }
 .day .row span { white-space: nowrap; }
 .day .row { display: flex; justify-content: space-between; gap: 6px; font-size: 13px; color: var(--muted); }
-.day .row b { color: var(--ink); font-weight: 500; font-family: var(--font-num); font-variant-numeric: tabular-nums; }
+.day .row b { white-space: nowrap; color: var(--ink); font-weight: 500; font-family: var(--font-num); font-variant-numeric: tabular-nums; }
+.ico { width: 34px; height: 34px; flex: none; }
+.ico .c { fill: var(--surface); stroke: var(--cloud); stroke-width: 1.6; stroke-linejoin: round; }
+.ico .s { fill: none; stroke: var(--sun); stroke-width: 1.8; stroke-linecap: round; }
+.ico .sf { fill: var(--sun); stroke: none; }
+.ico .d { fill: none; stroke: var(--drop); stroke-width: 2; stroke-linecap: round; }
+.ico .f { fill: none; stroke: var(--accent); stroke-width: 1.6; stroke-linecap: round; }
+.ico .m { fill: none; stroke: var(--cloud); stroke-width: 1.8; stroke-linecap: round; }
+.ico .b { fill: var(--sun); stroke: none; }
+.dayhead { display: flex; align-items: center; justify-content: space-between; gap: 6px; }
+.tile .v.withico { display: flex; align-items: center; gap: 10px; }
+.tile .v.withico .ico { width: 38px; height: 38px; }
 .pill { align-self: flex-start; font-size: 11px; font-weight: 600; padding: 1px 8px; border-radius: 999px; border: 1px solid var(--line); color: var(--muted); }
 .pill.snow { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
 .pill.mixed { border-color: var(--rain); color: var(--rain); }
@@ -117,7 +131,7 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
     <span>Forecast refreshed three times a day, around 07:00, 13:00 and 17:00 Swiss winter time (an hour later in summer).</span>
     <span id="method"></span>
     <span>This is not an avalanche bulletin. Check the SLF bulletin at <a href="https://www.slf.ch" target="_blank" rel="noopener">slf.ch</a> before leaving the piste.</span>
-    <span>Forecast data from <a href="https://www.meteoblue.com/nl/weer/week/grimentz_zwitserland_2660504" target="_blank" rel="noopener">meteoblue</a>, used for a non-commercial project. </span>
+    <span>Forecast data from <a href="https://www.meteoblue.com/nl/weer/week/grimentz_zwitserland_2660504" target="_blank" rel="noopener">meteoblue</a>,, used for a non-commercial project.</span>
   </div>
 </main>
 
@@ -136,7 +150,7 @@ function prepare(L) {
     return {
       t, date: t.slice(0, 10), hh: t.slice(11, 13), T, felt: h.felttemperature[i],
       precip: p, sf, cm: p * sf * ratio(T) / 10, rainMm: p * (1 - sf),
-      day: h.isdaylight[i], pp: h.precipitation_probability[i],
+      day: h.isdaylight[i], pp: h.precipitation_probability[i], pic: h.pictocode[i],
     };
   });
   const days = d.time.map((date, i) => {
@@ -145,9 +159,35 @@ function prepare(L) {
       date, cm: hrs.reduce((s, x) => s + x.cm, 0), mm: d.precipitation[i],
       tmax: d.temperature_max[i], tmin: d.temperature_min[i], sf: d.snowfraction[i],
       pred: d.predictability[i], windKmh: d.windspeed_max[i] * 3.6,
+      kind: dayKind(hrs, d.precipitation[i], d.snowfraction[i]),
     };
   });
   return { hours, days };
+}
+
+// meteoblue hourly pictocode (1-35) -> icon kind
+function kindOf(c) {
+  if (c >= 1 && c <= 6) return 'sun';
+  if (c >= 7 && c <= 12) return 'partly';
+  if (c >= 13 && c <= 15) return 'sun';
+  if (c >= 16 && c <= 18) return 'fog';
+  if (c >= 19 && c <= 21) return 'cloudy';
+  if (c === 22) return 'overcast';
+  if (c === 23 || c === 25 || c === 31 || c === 33) return 'rain';
+  if (c === 24 || c === 26 || c === 29 || c === 32 || c === 34) return 'snow';
+  if (c === 27 || c === 28 || c === 30) return 'thunder';
+  if (c === 35) return 'mixed';
+  return 'cloudy';
+}
+// One icon per day: precipitation decides first, otherwise the most common daytime sky.
+function dayKind(hrs, mm, sf) {
+  if (mm >= 0.5) return sf >= 0.8 ? 'snow' : (sf >= 0.2 ? 'mixed' : 'rain');
+  const pool = hrs.filter(x => x.day === 1);
+  const src = pool.length ? pool : hrs;
+  const count = {};
+  src.forEach(x => { const k = kindOf(x.pic); if (!['rain', 'snow', 'mixed', 'thunder'].includes(k)) count[k] = (count[k] || 0) + 1; });
+  const best = Object.entries(count).sort((a, b) => b[1] - a[1])[0];
+  return best ? best[0] : 'cloudy';
 }
 
 function nowIndex(hours, nowKey) {
@@ -157,9 +197,30 @@ function nowIndex(hours, nowKey) {
 const sumCm = (hours, from, n) => hours.slice(from, from + n).reduce((s, x) => s + x.cm, 0);
 // END PURE
 
+const CLOUD = 'M9.5 25a5 5 0 0 1-.4-10 7 7 0 0 1 13.3-1.5A5.5 5.5 0 0 1 23 25z';
+const RAYS = (cx, cy, r1, r2) => [0, 45, 90, 135, 180, 225, 270, 315].map(a => {
+  const t = a * Math.PI / 180, c = Math.cos(t), s = Math.sin(t);
+  return `<line class="s" x1="${(cx + c * r1).toFixed(1)}" y1="${(cy + s * r1).toFixed(1)}" x2="${(cx + c * r2).toFixed(1)}" y2="${(cy + s * r2).toFixed(1)}"/>`;
+}).join('');
+const FLAKE = (x, y) => `<g class="f"><line x1="${x}" y1="${y - 2.6}" x2="${x}" y2="${y + 2.6}"/><line x1="${x - 2.3}" y1="${y - 1.3}" x2="${x + 2.3}" y2="${y + 1.3}"/><line x1="${x - 2.3}" y1="${y + 1.3}" x2="${x + 2.3}" y2="${y - 1.3}"/></g>`;
+const ICONS = {
+  sun: `<circle class="sf" cx="16" cy="16" r="5.5"/>${RAYS(16, 16, 8.5, 12)}`,
+  moon: `<path class="b" d="M20.5 6.5a10 10 0 1 0 5 17.2A8.2 8.2 0 0 1 20.5 6.5z"/>`,
+  partly: `<circle class="sf" cx="21" cy="11" r="4.2"/>${RAYS(21, 11, 6.6, 9.4)}<path class="c" transform="translate(-1 2)" d="${CLOUD}"/>`,
+  cloudy: `<path class="c" d="${CLOUD}"/>`,
+  overcast: `<path class="c" transform="translate(4 -4) scale(.8)" d="${CLOUD}" style="opacity:.7"/><path class="c" transform="translate(0 1)" d="${CLOUD}"/>`,
+  fog: `<path class="c" transform="translate(0 -3)" d="${CLOUD}"/><line class="m" x1="7" y1="26" x2="25" y2="26"/><line class="m" x1="10" y1="29.5" x2="22" y2="29.5"/>`,
+  rain: `<path class="c" transform="translate(0 -3)" d="${CLOUD}"/><line class="d" x1="11" y1="25" x2="9.5" y2="29"/><line class="d" x1="16.5" y1="25" x2="15" y2="29"/><line class="d" x1="22" y1="25" x2="20.5" y2="29"/>`,
+  snow: `<path class="c" transform="translate(0 -3)" d="${CLOUD}"/>${FLAKE(10.5, 27)}${FLAKE(16.5, 27)}${FLAKE(22.5, 27)}`,
+  mixed: `<path class="c" transform="translate(0 -3)" d="${CLOUD}"/><line class="d" x1="11" y1="25" x2="9.5" y2="29"/>${FLAKE(16.5, 27)}<line class="d" x1="22.5" y1="25" x2="21" y2="29"/>`,
+  thunder: `<path class="c" transform="translate(0 -3)" d="${CLOUD}"/><polygon class="b" points="17,22 12,28.5 15.6,28.5 14,32 20,25.5 16.4,25.5 18.5,22"/>`,
+};
+const LABEL = { sun: 'Sunny', moon: 'Clear night', partly: 'Partly cloudy', cloudy: 'Mostly cloudy', overcast: 'Overcast', fog: 'Fog', rain: 'Rain', snow: 'Snow', mixed: 'Rain and snow', thunder: 'Thunderstorm' };
+const icon = (k, title) => `<svg class="ico" viewBox="0 0 32 32" role="img" aria-label="${title || LABEL[k]}"><title>${title || LABEL[k]}</title>${ICONS[k]}</svg>`;
+
 const $ = id => document.getElementById(id);
 const fmt = v => v < 0.05 ? '0' : (v >= 10 ? String(Math.round(v)) : v.toFixed(1));
-const LOCS = { village: 'Oree', summit: 'Orzival' };
+const LOCS = { village: 'Orée', summit: 'Orzival' };
 const state = { data: null, loc: 'village' };
 
 function wd(date, long) {
@@ -206,14 +267,16 @@ function render() {
   const fetched = new Date(state.data.fetched_at);
   const ageH = (Date.now() - fetched.getTime()) / 36e5;
   const stamp = fetched.toLocaleString('en-GB', { timeZone: 'Europe/Zurich', weekday: 'short', hour: '2-digit', minute: '2-digit' });
-  $('sub').textContent = `Val d'Anniviers, Valais · ${m.height} m · updated ${stamp} (Swiss time)`;
+  $('sub').textContent = `Grimentz, Val d'Anniviers · ${m.height} m · updated ${stamp} (Swiss time)`;
   const notice = $('notice');
   if (ageH > 18) { notice.className = 'notice warn'; notice.textContent = `This forecast is ${Math.round(ageH)} hours old. The scheduled update may have failed.`; }
   else { notice.className = 'notice'; notice.textContent = ''; }
 
-  const state1 = cur.precip < 0.1 ? 'Dry' : (cur.sf >= 0.5 ? 'Snowing' : 'Rain');
+  let nowKind = kindOf(cur.pic);
+  if (!cur.day && nowKind === 'sun') nowKind = 'moon';
+  if (!cur.day && nowKind === 'partly') nowKind = 'cloudy';
   $('tiles').innerHTML = `
-    <div class="tile"><div class="k">Now</div><div class="v">${Math.round(cur.T)}°<small>${state1}</small></div></div>
+    <div class="tile"><div class="k">Now</div><div class="v withico">${icon(nowKind)}<span>${Math.round(cur.T)}°<small>${LABEL[nowKind]}</small></span></div></div>
     <div class="tile"><div class="k">Snow, next 24 h</div><div class="v">${fmt(sumCm(hours, now, 24))}<small>cm</small></div></div>
     <div class="tile"><div class="k">Snow, next 72 h</div><div class="v">${fmt(sumCm(hours, now, 72))}<small>cm</small></div></div>
     <div class="tile"><div class="k">Snow, rest of week</div><div class="v">${fmt(sumCm(hours, now, hours.length))}<small>cm</small></div></div>`;
@@ -222,11 +285,11 @@ function render() {
     let kind = 'Dry', cls = '';
     if (x.mm >= 0.5) { if (x.sf >= 0.8) { kind = 'Snow'; cls = 'snow'; } else if (x.sf >= 0.2) { kind = 'Mixed'; cls = 'mixed'; } else { kind = 'Rain'; cls = 'rain'; } }
     return `<div class="day">
-      <div class="d">${wd(x.date)}<span>${Number(x.date.slice(8))}</span></div>
+      <div class="dayhead"><div class="d">${wd(x.date)}<span>${Number(x.date.slice(8))}</span></div>${icon(x.kind)}</div>
       <div class="amt">${fmt(x.cm)}<small>cm</small></div>
       <span class="pill ${cls}">${kind}</span>
       <div class="row"><span>Water</span><b>${fmt(x.mm)} mm</b></div>
-      <div class="row"><span>Hi / lo</span><b>${Math.round(x.tmax)}° / ${Math.round(x.tmin)}°</b></div>
+      <div class="row"><span>Hi / lo</span><b>${Math.round(x.tmax)}°/${Math.round(x.tmin)}°</b></div>
       <div class="row"><span>Wind</span><b>${Math.round(x.windKmh)} km/h</b></div>
       <div class="row"><span>Reliability</span><b>${x.pred}%</b></div>
       <div class="rel" title="meteoblue predictability"><i style="width:${x.pred}%"></i></div>
