@@ -14,25 +14,32 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-LAT, LON = 46.177, 7.577
-# name -> elevation in metres (meteoblue adjusts temperature to this height)
-LOCATIONS = {"village": 1570, "summit": 2595}
+# name -> coordinates and elevation in metres ("asl": meteoblue adjusts temperature to this height).
+# If "asl" is left out, meteoblue uses its own terrain height for the coordinates.
+# The names "village" and "summit" are the keys the web page looks up; only their labels change there.
+LOCATIONS = {
+    "village": {"lat": 46.17729798, "lon": 7.57090393, "asl": 1657},  # Taillis chalet
+    "summit": {"lat": 46.18407500, "lon": 7.53244822, "asl": 2595},  # Orzival
+}
 PACKAGES = "basic-1h_basic-day"
 OUT = sys.argv[1] if len(sys.argv) > 1 else "site/data.json"
 
 
-def fetch(asl, key):
-    query = urllib.parse.urlencode({"lat": LAT, "lon": LON, "asl": asl, "apikey": key})
+def fetch(name, loc, key):
+    params = {"lat": loc["lat"], "lon": loc["lon"], "apikey": key}
+    if "asl" in loc:
+        params["asl"] = loc["asl"]
+    query = urllib.parse.urlencode(params)
     url = f"https://my.meteoblue.com/packages/{PACKAGES}?{query}"
     try:
         with urllib.request.urlopen(url, timeout=30) as resp:
             body = json.load(resp)
     except urllib.error.HTTPError as e:
-        sys.exit(f"meteoblue returned HTTP {e.code} for elevation {asl} m")
+        sys.exit(f"meteoblue returned HTTP {e.code} for {name}")
     except Exception as e:  # network error, bad JSON, timeout
-        sys.exit(f"Request failed for elevation {asl} m: {type(e).__name__}")
+        sys.exit(f"Request failed for {name}: {type(e).__name__}")
     if "data_1h" not in body or "data_day" not in body:
-        sys.exit(f"Unexpected response for elevation {asl} m: keys {sorted(body)[:6]}")
+        sys.exit(f"Unexpected response for {name}: keys {sorted(body)[:6]}")
     return body
 
 
@@ -40,7 +47,7 @@ def main():
     key = os.environ.get("METEOBLUE_API_KEY")
     if not key:
         sys.exit("METEOBLUE_API_KEY is not set")
-    data = {name: fetch(asl, key) for name, asl in LOCATIONS.items()}
+    data = {name: fetch(name, loc, key) for name, loc in LOCATIONS.items()}
     out = {
         "fetched_at": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "locations": data,
@@ -48,7 +55,7 @@ def main():
     os.makedirs(os.path.dirname(OUT) or ".", exist_ok=True)
     with open(OUT, "w") as f:
         json.dump(out, f, separators=(",", ":"))
-    print(f"Wrote {OUT} with {len(data)} elevations")
+    print(f"Wrote {OUT} with {len(data)} locations")
 
 
 if __name__ == "__main__":
