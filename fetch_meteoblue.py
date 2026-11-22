@@ -16,7 +16,7 @@ import urllib.request
 
 LAT, LON = 46.177, 7.577
 # name -> elevation in metres (meteoblue adjusts temperature to this height)
-LOCATIONS = {"village": 1570, "summit": 2900}
+LOCATIONS = {"village": 1570, "summit": 2595}
 PACKAGES = "basic-1h_basic-day"
 OUT = sys.argv[1] if len(sys.argv) > 1 else "site/data.json"
 
