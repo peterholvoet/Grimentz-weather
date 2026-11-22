@@ -1,0 +1,296 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Grimentz Snow</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+:root {
+  /* Layout: header + elevation toggle, four summary tiles, seven day cards, hourly snow and temperature charts. */
+  --bg: #f1f5f9;
+  --surface: #ffffff;
+  --ink: #13202d;
+  --muted: #5a6b7c;
+  --line: #d9e2ea;
+  --accent: #1d6db0;
+  --accent-ink: #ffffff;
+  --rain: #b15609;
+  --night: rgba(19, 32, 45, 0.06);
+  --font-body: 'IBM Plex Sans', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --font-num: 'IBM Plex Mono', ui-monospace, Menlo, Consolas, monospace;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0d1520; --surface: #15212e; --ink: #e5edf5; --muted: #91a3b5; --line: #25354a;
+    --accent: #5aa9e6; --accent-ink: #06121e; --rain: #f0a35a; --night: rgba(255, 255, 255, 0.05);
+    color-scheme: dark;
+  }
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+body { background: var(--bg); color: var(--ink); font-family: var(--font-body); font-size: 15px; line-height: 1.45; }
+main { max-width: 1000px; margin: 0 auto; padding: 24px 16px 48px; display: flex; flex-direction: column; gap: 20px; }
+h1 { font-size: 26px; line-height: 1.15; margin: 0; font-weight: 600; }
+h2 { font-size: 14px; font-weight: 500; color: var(--muted); margin: 0 0 8px; }
+.sub { color: var(--muted); margin: 4px 0 0; font-size: 14px; }
+header { display: flex; flex-wrap: wrap; gap: 16px; align-items: flex-end; justify-content: space-between; }
+.seg { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; background: var(--surface); }
+.seg button { font: inherit; font-size: 13px; padding: 8px 14px; border: 0; border-right: 1px solid var(--line); background: transparent; color: var(--ink); cursor: pointer; }
+.seg button:last-child { border-right: 0; }
+.seg button[aria-pressed="true"] { background: var(--accent); color: var(--accent-ink); font-weight: 500; }
+button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+.tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 12px; }
+.tile { background: var(--surface); border: 1px solid var(--line); border-left: 4px solid var(--accent); border-radius: 10px; padding: 12px 16px; }
+.tile .k { color: var(--muted); font-size: 13px; }
+.tile .v { font-family: var(--font-num); font-size: 26px; font-weight: 500; margin-top: 2px; font-variant-numeric: tabular-nums; }
+.tile .v small { font-family: var(--font-body); font-size: 13px; color: var(--muted); font-weight: 400; margin-left: 4px; }
+
+.notice { font-size: 13px; color: var(--muted); }
+.notice.warn { color: var(--rain); }
+
+.days { display: grid; grid-template-columns: repeat(7, minmax(112px, 1fr)); gap: 10px; overflow-x: auto; padding-bottom: 4px; }
+.day { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 12px; display: flex; flex-direction: column; gap: 6px; }
+.day .d { font-weight: 500; }
+.day .d span { color: var(--muted); font-weight: 400; margin-left: 4px; }
+.day .amt { font-family: var(--font-num); font-size: 28px; font-weight: 500; line-height: 1.1; font-variant-numeric: tabular-nums; }
+.day .amt small { font-size: 12px; color: var(--muted); margin-left: 3px; font-family: var(--font-body); }
+.day .row span { white-space: nowrap; }
+.day .row { display: flex; justify-content: space-between; gap: 6px; font-size: 13px; color: var(--muted); }
+.day .row b { color: var(--ink); font-weight: 500; font-family: var(--font-num); font-variant-numeric: tabular-nums; }
+.pill { align-self: flex-start; font-size: 11px; font-weight: 600; padding: 1px 8px; border-radius: 999px; border: 1px solid var(--line); color: var(--muted); }
+.pill.snow { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+.pill.mixed { border-color: var(--rain); color: var(--rain); }
+.pill.rain { background: var(--rain); border-color: var(--rain); color: var(--surface); }
+.rel { height: 5px; background: var(--line); border-radius: 3px; overflow: hidden; }
+.rel i { display: block; height: 100%; background: var(--accent); }
+
+.panel { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px 10px; }
+.panel svg { width: 100%; height: auto; display: block; }
+.panel text { fill: var(--muted); font-family: var(--font-num); font-size: 10px; }
+.panel .axis { stroke: var(--line); stroke-width: 1; }
+.panel .night { fill: var(--night); }
+.panel .sep { stroke: var(--line); stroke-dasharray: 2 3; }
+.panel .bar { fill: var(--accent); }
+.panel .cum { fill: none; stroke: var(--ink); stroke-width: 1.5; }
+.panel .temp { fill: none; stroke: var(--accent); stroke-width: 1.8; }
+.panel .felt { fill: none; stroke: var(--muted); stroke-width: 1; stroke-dasharray: 3 3; }
+.panel .zero { stroke: var(--rain); stroke-width: 1.1; stroke-dasharray: 4 3; }
+.panel .zerotxt { fill: var(--rain); }
+.legend { display: flex; flex-wrap: wrap; gap: 14px; font-size: 12px; color: var(--muted); margin: 0 0 6px; }
+.legend i { display: inline-block; width: 12px; height: 8px; margin-right: 5px; vertical-align: 0; border-radius: 2px; }
+.foot { color: var(--muted); font-size: 13px; display: flex; flex-direction: column; gap: 6px; }
+.foot a { color: var(--accent); }
+.err { color: var(--rain); }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <div>
+      <h1>Grimentz Snow</h1>
+      <p class="sub" id="sub">Val d'Anniviers, Valais</p>
+    </div>
+    <div class="seg" id="elev" role="group" aria-label="Elevation" hidden></div>
+  </header>
+
+  <div class="notice" id="notice" role="status">Loading forecast…</div>
+  <section class="tiles" id="tiles" aria-label="Summary"></section>
+  <section aria-label="Daily forecast"><h2>Next 7 days</h2><div class="days" id="days"></div></section>
+
+  <section class="panel" aria-label="Hourly snowfall">
+    <h2>Hourly snowfall, estimated</h2>
+    <div class="legend"><span><i style="background:var(--accent)"></i>Snow per hour (cm)</span><span><i style="background:var(--ink)"></i>Running total (cm)</span><span><i style="background:var(--night)"></i>Night</span></div>
+    <div id="snowchart"></div>
+  </section>
+  <section class="panel" aria-label="Hourly temperature">
+    <h2>Temperature (°C)</h2>
+    <div class="legend"><span><i style="background:var(--accent)"></i>Air</span><span><i style="background:var(--muted)"></i>Feels like</span><span><i style="background:var(--rain)"></i>0 °C</span></div>
+    <div id="tempchart"></div>
+  </section>
+
+  <div class="foot">
+    <span id="method"></span>
+    <span>This is not an avalanche bulletin. Check the SLF bulletin at <a href="https://www.slf.ch" target="_blank" rel="noopener">slf.ch</a> before leaving the piste.</span>
+    <span>Forecast data from <a href="https://www.meteoblue.com" target="_blank" rel="noopener">meteoblue</a>, used for a non-commercial project. Replace this link with the meteoblue page for Grimentz.</span>
+  </div>
+</main>
+
+<script>
+// ---- pure calculations (also run in Node for testing) ----
+// BEGIN PURE
+// Snow-to-water ratio: 8:1 at 0 °C, rising to 16:1 at -10 °C or colder, never below 6:1.
+const ratio = T => Math.min(16, Math.max(6, 8 - 0.8 * T));
+
+function prepare(L) {
+  const h = L.data_1h, d = L.data_day;
+  const hours = h.time.map((t, i) => {
+    const p = h.precipitation[i] || 0;
+    const sf = h.snowfraction[i] || 0;
+    const T = h.temperature[i];
+    return {
+      t, date: t.slice(0, 10), hh: t.slice(11, 13), T, felt: h.felttemperature[i],
+      precip: p, sf, cm: p * sf * ratio(T) / 10, rainMm: p * (1 - sf),
+      day: h.isdaylight[i], pp: h.precipitation_probability[i],
+    };
+  });
+  const days = d.time.map((date, i) => {
+    const hrs = hours.filter(x => x.date === date);
+    return {
+      date, cm: hrs.reduce((s, x) => s + x.cm, 0), mm: d.precipitation[i],
+      tmax: d.temperature_max[i], tmin: d.temperature_min[i], sf: d.snowfraction[i],
+      pred: d.predictability[i], windKmh: d.windspeed_max[i] * 3.6,
+    };
+  });
+  return { hours, days };
+}
+
+function nowIndex(hours, nowKey) {
+  let i = hours.findIndex(x => x.t >= nowKey);
+  return i < 0 ? hours.length - 1 : i;
+}
+const sumCm = (hours, from, n) => hours.slice(from, from + n).reduce((s, x) => s + x.cm, 0);
+// END PURE
+
+const $ = id => document.getElementById(id);
+const fmt = v => v < 0.05 ? '0' : (v >= 10 ? String(Math.round(v)) : v.toFixed(1));
+const LOCS = { village: 'Village', summit: 'Summit' };
+const state = { data: null, loc: 'village' };
+
+function wd(date, long) {
+  return new Date(date + 'T12:00:00').toLocaleDateString('en-GB', { weekday: long ? 'long' : 'short' });
+}
+function zurichNowKey() {
+  return new Date().toLocaleString('sv-SE', { timeZone: 'Europe/Zurich' }).slice(0, 13).replace(' ', ' ') + ':00';
+}
+
+async function init() {
+  try {
+    const res = await fetch('data.json', { cache: 'no-store' });
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    state.data = await res.json();
+  } catch (e) {
+    $('notice').className = 'notice err';
+    $('notice').textContent = 'Could not load data.json. If you opened this file from your disk, serve the folder with "python3 -m http.server" or use the GitHub Pages address.';
+    return;
+  }
+  const names = Object.keys(LOCS).filter(k => state.data.locations[k]);
+  if (names.length > 1) {
+    const box = $('elev');
+    box.hidden = false;
+    box.innerHTML = names.map(k => {
+      const m = state.data.locations[k].metadata.height;
+      return `<button data-k="${k}" aria-pressed="${k === state.loc}">${LOCS[k]} ${m} m</button>`;
+    }).join('');
+    box.querySelectorAll('button').forEach(b => b.onclick = () => {
+      state.loc = b.dataset.k;
+      box.querySelectorAll('button').forEach(x => x.setAttribute('aria-pressed', String(x === b)));
+      render();
+    });
+  }
+  render();
+}
+
+function render() {
+  const L = state.data.locations[state.loc];
+  const { hours, days } = prepare(L);
+  const now = nowIndex(hours, zurichNowKey());
+  const cur = hours[now];
+  const m = L.metadata;
+
+  const fetched = new Date(state.data.fetched_at);
+  const ageH = (Date.now() - fetched.getTime()) / 36e5;
+  const stamp = fetched.toLocaleString('en-GB', { timeZone: 'Europe/Zurich', weekday: 'short', hour: '2-digit', minute: '2-digit' });
+  $('sub').textContent = `Val d'Anniviers, Valais · ${m.height} m · updated ${stamp} (Swiss time)`;
+  const notice = $('notice');
+  if (ageH > 18) { notice.className = 'notice warn'; notice.textContent = `This forecast is ${Math.round(ageH)} hours old. The scheduled update may have failed.`; }
+  else { notice.className = 'notice'; notice.textContent = ''; }
+
+  const state1 = cur.precip < 0.1 ? 'Dry' : (cur.sf >= 0.5 ? 'Snowing' : 'Rain');
+  $('tiles').innerHTML = `
+    <div class="tile"><div class="k">Now</div><div class="v">${Math.round(cur.T)}°<small>${state1}</small></div></div>
+    <div class="tile"><div class="k">Snow, next 24 h</div><div class="v">${fmt(sumCm(hours, now, 24))}<small>cm</small></div></div>
+    <div class="tile"><div class="k">Snow, next 72 h</div><div class="v">${fmt(sumCm(hours, now, 72))}<small>cm</small></div></div>
+    <div class="tile"><div class="k">Snow, rest of week</div><div class="v">${fmt(sumCm(hours, now, hours.length))}<small>cm</small></div></div>`;
+
+  $('days').innerHTML = days.map(x => {
+    let kind = 'Dry', cls = '';
+    if (x.mm >= 0.5) { if (x.sf >= 0.8) { kind = 'Snow'; cls = 'snow'; } else if (x.sf >= 0.2) { kind = 'Mixed'; cls = 'mixed'; } else { kind = 'Rain'; cls = 'rain'; } }
+    return `<div class="day">
+      <div class="d">${wd(x.date)}<span>${Number(x.date.slice(8))}</span></div>
+      <div class="amt">${fmt(x.cm)}<small>cm</small></div>
+      <span class="pill ${cls}">${kind}</span>
+      <div class="row"><span>Water</span><b>${fmt(x.mm)} mm</b></div>
+      <div class="row"><span>Hi / lo</span><b>${Math.round(x.tmax)}° / ${Math.round(x.tmin)}°</b></div>
+      <div class="row"><span>Wind</span><b>${Math.round(x.windKmh)} km/h</b></div>
+      <div class="row"><span>Reliability</span><b>${x.pred}%</b></div>
+      <div class="rel" title="meteoblue predictability"><i style="width:${x.pred}%"></i></div>
+    </div>`;
+  }).join('');
+
+  $('snowchart').innerHTML = snowChart(hours, now);
+  $('tempchart').innerHTML = tempChart(hours, now);
+  $('method').textContent = 'Snow in cm is an estimate: precipitation (mm) × snow fraction × a snow-to-water ratio from 8:1 at 0 °C to 16:1 at -10 °C. Real depth varies with wind and settling. Reliability is meteoblue\'s predictability for the day.';
+}
+
+// ---- charts ----
+const W = 900, PL = 44, PR = 44, H = 130;
+function frame(hours, now) {
+  const n = hours.length, bw = (W - PL - PR) / n;
+  const x0 = i => PL + i * bw;
+  let night = '', run = -1;
+  hours.forEach((x, i) => {
+    if (!x.day && run < 0) run = i;
+    if ((x.day || i === n - 1) && run >= 0) { const end = x.day ? i : n; night += `<rect class="night" x="${x0(run).toFixed(1)}" y="0" width="${((end - run) * bw).toFixed(1)}" height="${H}"/>`; run = -1; }
+  });
+  const seps = hours.map((x, i) => x.hh === '00' ? i : -1).filter(i => i >= 0).map(i =>
+    `<line class="sep" x1="${x0(i).toFixed(1)}" x2="${x0(i).toFixed(1)}" y1="0" y2="${H}"/><text x="${(x0(i) + 3).toFixed(1)}" y="${H + 13}">${wd(hours[i].date)}</text>`).join('');
+  const nowLine = `<line class="zero" x1="${x0(now).toFixed(1)}" x2="${x0(now).toFixed(1)}" y1="0" y2="${H}" style="stroke-dasharray:none;opacity:.5"/>`;
+  return { n, bw, x0, bg: night + seps + nowLine };
+}
+
+function snowChart(hours, now) {
+  const f = frame(hours, now);
+  const hMax = Math.max(1, Math.ceil(Math.max(...hours.map(x => x.cm))));
+  let c = 0; const cum = hours.map(x => (c += x.cm));
+  const cMax = Math.max(1, Math.ceil(c));
+  const yB = v => H - (v / hMax) * (H - 8), yC = v => H - (v / cMax) * (H - 8);
+  const bars = hours.map((x, i) => {
+    const bh = H - yB(x.cm);
+    const tip = `<title>${wd(x.date)} ${x.hh}:00 · ${fmt(x.cm)} cm · ${Math.round(x.T)}°C</title>`;
+    return `<g>${bh > 0.4 ? `<rect class="bar" x="${f.x0(i).toFixed(1)}" y="${yB(x.cm).toFixed(1)}" width="${Math.max(f.bw - 0.4, 0.8).toFixed(1)}" height="${bh.toFixed(1)}"/>` : ''}<rect x="${f.x0(i).toFixed(1)}" y="0" width="${f.bw.toFixed(1)}" height="${H}" fill="transparent">${tip}</rect></g>`;
+  }).join('');
+  const line = cum.map((v, i) => `${i ? 'L' : 'M'}${(f.x0(i) + f.bw / 2).toFixed(1)},${yC(v).toFixed(1)}`).join(' ');
+  return `<svg viewBox="0 0 ${W} ${H + 18}" role="img" aria-label="Hourly estimated snowfall and running total in centimetres">
+    ${f.bg}
+    <line class="axis" x1="${PL}" x2="${W - PR}" y1="${H}" y2="${H}"/>
+    <text x="${PL - 6}" y="${H}" text-anchor="end">0</text><text x="${PL - 6}" y="10" text-anchor="end">${hMax} cm/h</text>
+    <text x="${W - PR + 6}" y="${H}">0</text><text x="${W - PR + 6}" y="10">${cMax} cm</text>
+    ${bars}<path class="cum" d="${line}"/></svg>`;
+}
+
+function tempChart(hours, now) {
+  const f = frame(hours, now);
+  const all = hours.flatMap(x => [x.T, x.felt]);
+  let lo = Math.floor(Math.min(...all, 0) / 2) * 2, hi = Math.ceil(Math.max(...all, 0) / 2) * 2;
+  if (hi - lo < 6) hi = lo + 6;
+  const y = v => H - ((v - lo) / (hi - lo)) * (H - 8) - 0;
+  const path = key => hours.map((x, i) => `${i ? 'L' : 'M'}${(f.x0(i) + f.bw / 2).toFixed(1)},${y(x[key]).toFixed(1)}`).join(' ');
+  const hover = hours.map((x, i) => `<rect x="${f.x0(i).toFixed(1)}" y="0" width="${f.bw.toFixed(1)}" height="${H}" fill="transparent"><title>${wd(x.date)} ${x.hh}:00 · ${x.T.toFixed(1)}°C, feels ${x.felt.toFixed(1)}°C</title></rect>`).join('');
+  return `<svg viewBox="0 0 ${W} ${H + 18}" role="img" aria-label="Hourly temperature in degrees Celsius">
+    ${f.bg}
+    <line class="axis" x1="${PL}" x2="${W - PR}" y1="${H}" y2="${H}"/>
+    <text x="${PL - 6}" y="${H}" text-anchor="end">${lo}°</text><text x="${PL - 6}" y="10" text-anchor="end">${hi}°</text>
+    <line class="zero" x1="${PL}" x2="${W - PR}" y1="${y(0).toFixed(1)}" y2="${y(0).toFixed(1)}"/>
+    <text class="zerotxt" x="${W - PR + 6}" y="${(y(0) + 3).toFixed(1)}">0°</text>
+    <path class="felt" d="${path('felt')}"/><path class="temp" d="${path('T')}"/>${hover}</svg>`;
+}
+
+init();
+</script>
+</body>
+</html>
