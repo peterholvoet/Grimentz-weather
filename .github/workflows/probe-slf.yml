@@ -1,0 +1,15 @@
+name: Probe SLF API (one-off)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Look up the SLF measurement API
+        run: python3 probe_slf.py
