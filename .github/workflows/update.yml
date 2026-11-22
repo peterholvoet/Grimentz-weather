@@ -2,7 +2,8 @@ name: Update Grimentz forecast
 
 on:
   schedule:
-    # Three times a day 5 min after 6-12-16 (UTC). Each run makes 2 API calls (village + summit).
+    # Three times a day (UTC): 07:05, 13:05 and 17:05 Swiss winter time.
+    # Each run makes one API call per place in fetch_meteoblue.py.
     - cron: "5 6,12,16 * * *"
   push:
     branches: [main]
@@ -15,14 +16,11 @@ permissions:
 
 concurrency:
   group: pages
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
-  deploy:
+  build:
     runs-on: ubuntu-latest
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - uses: actions/checkout@v4
 
@@ -35,5 +33,12 @@ jobs:
         with:
           path: site
 
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
       - id: deployment
         uses: actions/deploy-pages@v4
