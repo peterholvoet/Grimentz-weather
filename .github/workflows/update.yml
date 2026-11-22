@@ -2,7 +2,7 @@ name: Update Grimentz forecast
 
 on:
   schedule:
-    # Three times a day (UTC). Each run makes 2 API calls (village + summit).
+    # Three times a day 5 min after 6-12-16 (UTC). Each run makes 2 API calls (village + summit).
     - cron: "5 6,12,16 * * *"
   push:
     branches: [main]
