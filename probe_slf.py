@@ -1,53 +1,74 @@
 #!/usr/bin/env python3
-"""One-off helper: finds out how SLF's open measurement API serves manual station 4GR0 (Grimentz).
-It only prints what it finds; it changes nothing and uses no API key."""
+"""One-off helper: looks up the current SLF avalanche bulletin (CAAML JSON) and prints what it says
+for region CH-4124. It only prints; it changes nothing and uses no API key."""
 import json
-import re
 import urllib.request
 
-BASE = "https://measurement-api.slf.ch"
-STATION = "4GR0"
+REGION = "CH-4124"
+HOST = "https://aws.slf.ch"
 
 
-def get(path, limit=1500):
-    url = BASE + path
+def get(url, limit=0):
     try:
         req = urllib.request.Request(url, headers={"Accept": "application/json", "User-Agent": "grimentz-dashboard-probe"})
-        with urllib.request.urlopen(req, timeout=30) as r:
+        with urllib.request.urlopen(req, timeout=40) as r:
             body = r.read().decode("utf-8", "replace")
-            print(f"--- {path} -> HTTP {r.status}, {len(body)} bytes")
+        print(f"--- {url} -> HTTP {r.status}, {len(body)} bytes")
+        if limit:
             print(body[:limit])
-            return body
+        return body
     except Exception as e:
-        print(f"--- {path} -> {type(e).__name__}: {e}")
+        print(f"--- {url} -> {type(e).__name__}: {e}")
         return None
 
 
+def find_regions(node, found):
+    """Collect every dict that looks like a region reference."""
+    if isinstance(node, dict):
+        rid = node.get("regionID") or node.get("id")
+        if isinstance(rid, str) and rid.startswith("CH-"):
+            found.append(rid)
+        for v in node.values():
+            find_regions(v, found)
+    elif isinstance(node, list):
+        for v in node:
+            find_regions(v, found)
+
+
 def main():
-    # 1. Look for the API description (OpenAPI) and print every path that looks relevant.
-    for spec in ["/public/api/openapi.json", "/public/api/v3/api-docs", "/v3/api-docs", "/openapi.json",
-                 "/public/api/swagger.json", "/swagger.json", "/public/api/docs/openapi.json"]:
-        body = get(spec, limit=200)
+    # 1. API description, if there is one.
+    for spec in ["/api/bulletin/caaml/openapi.json", "/api/bulletin/openapi.json", "/openapi.json"]:
+        body = get(HOST + spec, limit=150)
         if body:
             try:
-                paths = list(json.loads(body).get("paths", {}))
-                print("API PATHS:")
-                for p in paths:
-                    print("  ", p)
+                print("API PATHS:", list(json.loads(body).get("paths", {})))
                 break
             except Exception:
                 pass
-    # 2. The landing page often names the spec file.
-    page = get("/", limit=1200)
-    if page:
-        print("Spec hints:", re.findall(r'["\'(]([^"\'()\s]+\.(?:json|yaml|yml))', page)[:10])
-    # 3. Guess the manual-station endpoints for 4GR0.
-    for p in [f"/public/api/study-plot/station/{STATION}/measurements?period_in_days=7",
-              f"/public/api/study-plots/{STATION}/measurements?period_in_days=7",
-              f"/public/api/study-plot/{STATION}/measurements?period_in_days=7",
-              "/public/api/study-plot/stations", "/public/api/study-plots",
-              "/public/api/manual/stations", f"/public/api/manual/station/{STATION}/measurements?period_in_days=7"]:
-        get(p)
+    # 2. The bulletin itself.
+    for path in ["/api/bulletin/caaml/en/json", "/api/bulletin/caaml/en", "/api/bulletin/caaml"]:
+        body = get(HOST + path, limit=300)
+        if not body:
+            continue
+        try:
+            data = json.loads(body)
+        except Exception:
+            print("(not JSON)")
+            continue
+        print("Top-level keys:", list(data)[:10] if isinstance(data, dict) else type(data))
+        bulletins = data.get("bulletins", []) if isinstance(data, dict) else []
+        print("Bulletins in file:", len(bulletins))
+        for b in bulletins:
+            ids = []
+            find_regions(b.get("regions", []), ids)
+            if REGION in ids:
+                print(f"\n===== BULLETIN FOR {REGION} =====")
+                print(json.dumps(b, ensure_ascii=False, indent=1)[:9000])
+                return
+        allids = []
+        find_regions(bulletins, allids)
+        print("No bulletin lists", REGION, "- regions seen:", sorted(set(allids))[:80])
+        return
 
 
 if __name__ == "__main__":
