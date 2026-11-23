@@ -22,6 +22,9 @@ LOCATIONS = {
     "summit": {"lat": 46.18407500, "lon": 7.53244822, "asl": 2595},  # Orzival
 }
 PACKAGES = "basic-1h_basic-day"
+
+# SLF manual measuring station at Grimentz: snow read by hand each morning (open data, no key, CC BY 4.0).
+SLF_STATION = {"code": "4GR0", "name": "Grimentz", "elevation": 1560}
 OUT = sys.argv[1] if len(sys.argv) > 1 else "site/data.json"
 
 
@@ -43,6 +46,26 @@ def fetch(name, loc, key):
     return body
 
 
+def fetch_manual_station():
+    """Daily hand measurements (snow depth, new snow in 24 h) from the SLF observer.
+    Never stops the forecast update: returns None if SLF cannot be reached."""
+    code = SLF_STATION["code"]
+    url = f"https://measurement-api.slf.ch/public/api/study-plot/station/{code}/measurements?period_in_days=7"
+    try:
+        req = urllib.request.Request(url, headers={"Accept": "application/json", "User-Agent": "grimentz-dashboard"})
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            raw = json.load(resp)
+        rows = [{"date": r["measure_date"][:10], "hs": r.get("HS"), "hn": r.get("HN_1D")}
+                for r in raw if r.get("measure_date")]
+        rows.sort(key=lambda r: r["date"])
+        if not rows:
+            raise ValueError("no rows")
+    except Exception as e:
+        print(f"SLF station data not available: {type(e).__name__}")
+        return None
+    return {**SLF_STATION, "rows": rows}
+
+
 def main():
     key = os.environ.get("METEOBLUE_API_KEY")
     if not key:
@@ -52,6 +75,9 @@ def main():
         "fetched_at": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "locations": data,
     }
+    observation = fetch_manual_station()
+    if observation:
+        out["observation"] = observation
     os.makedirs(os.path.dirname(OUT) or ".", exist_ok=True)
     with open(OUT, "w") as f:
         json.dump(out, f, separators=(",", ":"))
