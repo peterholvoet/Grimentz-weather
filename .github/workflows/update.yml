@@ -4,7 +4,7 @@ on:
   schedule:
     # Three times a day (UTC): 07:05, 13:05 and 17:05 Swiss winter time.
     # Each run makes one API call per place in fetch_meteoblue.py.
-    - cron: "5 6,12,16 * * *"
+   - cron: "20 5,11,15 * * *"
   push:
     branches: [main]
   workflow_dispatch:
