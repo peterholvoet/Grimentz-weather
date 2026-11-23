@@ -158,8 +158,6 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   <section class="tiles" id="tiles" aria-label="Summary"></section>
   <section aria-label="Daily forecast"><h2>Next 7 days</h2><div class="days" id="days"></div></section>
 
-  <section class="panel bul" id="bul" aria-label="Avalanche bulletin" hidden></section>
-
   <section class="panel" id="obs" aria-label="Measured snow at the Grimentz station" hidden>
     <div class="obs-head"><h2 id="obs-title">Measured at the station</h2><span class="pill manual">Manual measurement</span></div>
     <div class="obs-body" id="obs-body"></div>
@@ -177,6 +175,8 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
     <div class="legend"><span><i style="background:var(--accent)"></i>Air</span><span><i style="background:var(--muted)"></i>Feels like</span><span><i style="background:var(--rain)"></i>0 °C</span></div>
     <div id="tempchart"></div>
   </section>
+
+  <section class="panel bul" id="bul" aria-label="Avalanche bulletin" hidden></section>
 
   <div class="foot">
     <span>Forecast refreshed three times a day, usually between 07:00 and 08:00, 13:00 and 14:00, and 17:00 and 18:00 Swiss winter time (an hour later in summer).</span>
