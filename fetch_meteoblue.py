@@ -27,6 +27,10 @@ PACKAGES = "basic-1h_basic-day"
 SLF_STATION = {"code": "4GR0", "name": "Grimentz", "elevation": 1560}
 OUT = sys.argv[1] if len(sys.argv) > 1 else "site/data.json"
 
+# Official SLF avalanche bulletin (CAAML JSON, open data, CC BY 4.0) for the region Val d'Anniviers.
+BULLETIN_REGION = "CH-4124"
+BULLETIN_URL = "https://aws.slf.ch/api/bulletin/caaml/en/json"
+
 
 def fetch(name, loc, key):
     params = {"lat": loc["lat"], "lon": loc["lon"], "apikey": key}
@@ -66,6 +70,59 @@ def fetch_manual_station():
     return {**SLF_STATION, "rows": rows}
 
 
+def fetch_bulletin():
+    """Current avalanche bulletin for BULLETIN_REGION, reduced to what the page shows.
+    Never stops the forecast update: returns None if SLF cannot be reached or has no entry."""
+    try:
+        req = urllib.request.Request(BULLETIN_URL, headers={"Accept": "application/json", "User-Agent": "grimentz-dashboard"})
+        with urllib.request.urlopen(req, timeout=60) as resp:
+            data = json.load(resp)
+        for b in data.get("bulletins", []):
+            region = next((r for r in b.get("regions", []) if r.get("regionID") == BULLETIN_REGION), None)
+            if region:
+                return reduce_bulletin(b, region)
+        print(f"No avalanche bulletin found for {BULLETIN_REGION}")
+    except Exception as e:
+        print(f"Avalanche bulletin not available: {type(e).__name__}")
+    return None
+
+
+def reduce_bulletin(b, region):
+    def ch(d):
+        return ((d or {}).get("customData") or {}).get("CH") or {}
+
+    def text(section, key="comment"):
+        return ((b.get(section) or {}).get(key) or "").strip()
+
+    sections = [
+        ("Summary", text("avalancheActivity", "highlights")),
+        ("Avalanche activity", text("avalancheActivity")),
+        ("Snowpack", text("snowpackStructure")),
+        ("Weather", text("weatherForecast")),
+        ("Recent weather", text("weatherReview")),
+    ]
+    tendency = (b.get("tendency") or [None])[0]
+    if tendency:
+        words = (tendency.get("tendencyType") or "").replace("_", " ").capitalize()
+        body = (tendency.get("comment") or tendency.get("highlights") or "").strip()
+        sections.append(("Tendency", (words + ". " + body).strip(". ").strip() if body else words))
+    return {
+        "region_id": BULLETIN_REGION,
+        "name": region.get("name", BULLETIN_REGION),
+        "valid_from": (b.get("validTime") or {}).get("startTime"),
+        "valid_to": (b.get("validTime") or {}).get("endTime"),
+        "next_update": b.get("nextUpdate"),
+        "ratings": [{"level": r.get("mainValue"), "sub": ch(r).get("subdivision"),
+                     "elevation": r.get("elevation"), "period": r.get("validTimePeriod")}
+                    for r in b.get("dangerRatings", [])],
+        "problems": [{"type": p.get("problemType"), "level": p.get("dangerRatingValue"),
+                      "elevation": p.get("elevation"), "aspects": p.get("aspects") or [],
+                      "comment": (p.get("comment") or "").strip(), "period": p.get("validTimePeriod")}
+                     for p in b.get("avalancheProblems", [])],
+        "sections": [{"title": t, "text": x} for t, x in sections if x],
+    }
+
+
 def main():
     key = os.environ.get("METEOBLUE_API_KEY")
     if not key:
@@ -78,6 +135,9 @@ def main():
     observation = fetch_manual_station()
     if observation:
         out["observation"] = observation
+    bulletin = fetch_bulletin()
+    if bulletin:
+        out["bulletin"] = bulletin
     os.makedirs(os.path.dirname(OUT) or ".", exist_ok=True)
     with open(OUT, "w") as f:
         json.dump(out, f, separators=(",", ":"))
