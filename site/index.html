@@ -100,6 +100,27 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .foot { color: var(--muted); font-size: 13px; display: flex; flex-direction: column; gap: 6px; }
 .foot a { color: var(--accent); }
 .err { color: var(--rain); }
+.obs-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 10px; }
+.obs-head h2 { margin: 0; }
+.pill.manual { background: transparent; border-color: var(--accent); color: var(--accent); }
+.obs-body { display: grid; grid-template-columns: minmax(220px, 1fr) 2fr; gap: 20px; align-items: end; }
+.obs-stats { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.obs-stats div { display: flex; flex-direction: column; }
+.obs-stats .n { font-family: var(--font-num); font-size: 26px; font-weight: 500; line-height: 1.1; font-variant-numeric: tabular-nums; }
+.obs-stats .n small { font-family: var(--font-body); font-size: 12px; color: var(--muted); font-weight: 400; margin-left: 3px; }
+.obs-stats .l { font-size: 12px; color: var(--muted); }
+.obs-cols { display: grid; grid-template-columns: repeat(7, 1fr); gap: 8px; align-items: end; }
+.ocol { display: flex; flex-direction: column; align-items: center; justify-content: flex-end; gap: 3px; font-family: var(--font-num); font-variant-numeric: tabular-nums; font-size: 12px; }
+.obar { width: 70%; max-width: 38px; min-height: 2px; background: var(--accent); border-radius: 3px 3px 0 0; }
+.oval { font-weight: 500; }
+.odate { color: var(--muted); font-family: var(--font-body); }
+.ohs { color: var(--muted); border-top: 1px solid var(--line); padding-top: 3px; width: 100%; text-align: center; }
+.obs-legend { color: var(--muted); font-size: 12px; margin: 0 0 6px; }
+.obs-note { color: var(--muted); font-size: 13px; margin: 12px 0 0; }
+.obs-note a, .obs-warn a { color: var(--accent); }
+.obs-warn { color: var(--rain); font-size: 13px; margin: 8px 0 0; }
+[hidden] { display: none !important; }
+@media (max-width: 640px) { .obs-body { grid-template-columns: 1fr; } }
 </style>
 </head>
 <body>
@@ -116,6 +137,13 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   <section class="tiles" id="tiles" aria-label="Summary"></section>
   <section aria-label="Daily forecast"><h2>Next 7 days</h2><div class="days" id="days"></div></section>
 
+  <section class="panel" id="obs" aria-label="Measured snow at the Grimentz station" hidden>
+    <div class="obs-head"><h2 id="obs-title">Measured at the station</h2><span class="pill manual">Manual measurement</span></div>
+    <div class="obs-body" id="obs-body"></div>
+    <p class="obs-warn" id="obs-warn" hidden></p>
+    <p class="obs-note" id="obs-note"></p>
+  </section>
+
   <section class="panel" aria-label="Hourly snowfall">
     <h2>Hourly snowfall, estimated</h2>
     <div class="legend"><span><i style="background:var(--accent)"></i>Snow per hour (cm)</span><span><i style="background:var(--ink)"></i>Running total (cm)</span><span><i style="background:var(--night)"></i>Night</span></div>
@@ -129,6 +157,7 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
   <div class="foot">
     <span>Forecast refreshed three times a day, around 07:00, 13:00 and 17:00 Swiss winter time (an hour later in summer).</span>
+    <span>Snow measurements: <a href="https://www.slf.ch" target="_blank" rel="noopener">WSL Institute for Snow and Avalanche Research SLF</a> (open data, CC BY 4.0).</span>
     <span id="method"></span>
     <span>This is not an avalanche bulletin. Check the SLF bulletin at <a href="https://www.slf.ch" target="_blank" rel="noopener">slf.ch</a> before leaving the piste.</span>
     <span>Forecast data from <a href="https://www.meteoblue.com/nl/weer/week/grimentz_zwitserland_2660504" target="_blank" rel="noopener">meteoblue</a>, used for a non-commercial project.</span>
@@ -257,7 +286,39 @@ async function init() {
   render();
 }
 
+const whole = v => String(Math.round(v || 0));
+function renderObs() {
+  const o = state.data.observation, box = $('obs');
+  if (!o || !o.rows || !o.rows.length) { box.hidden = true; return; }
+  box.hidden = false;
+  const rows = o.rows.slice(-7), last = rows[rows.length - 1];
+  const day = d => Date.parse(d + 'T12:00:00Z');
+  const sumN = n => rows.filter(r => (day(last.date) - day(r.date)) / 864e5 < n).reduce((s, r) => s + (r.hn || 0), 0);
+  const maxHn = Math.max(5, ...rows.map(r => r.hn || 0));
+  $('obs-title').textContent = `Measured at the ${o.name} station`;
+  const lastLabel = `${wd(last.date, true)} ${Number(last.date.slice(8))} ${new Date(last.date + 'T12:00:00').toLocaleDateString('en-GB', { month: 'long' })}`;
+  $('obs-body').innerHTML = `
+    <div>
+      <div class="obs-legend">Latest reading: ${lastLabel}, morning</div>
+      <div class="obs-stats">
+        <div><span class="n">${last.hs == null ? '–' : Math.round(last.hs)}<small>cm</small></span><span class="l">Snow depth</span></div>
+        <div><span class="n">${whole(last.hn)}<small>cm</small></span><span class="l">New snow, 24 h</span></div>
+        <div><span class="n">${whole(sumN(3))}<small>cm</small></span><span class="l">New snow, 3 days</span></div>
+        <div><span class="n">${whole(sumN(7))}<small>cm</small></span><span class="l">New snow, 7 days</span></div>
+      </div>
+    </div>
+    <div>
+      <div class="obs-legend">Bars: new snow in 24 h (cm). Below each day: snow depth on the ground (cm).</div>
+      <div class="obs-cols">${rows.map(r => `<div class="ocol"><span class="oval">${whole(r.hn)}</span><div class="obar" style="height:${(((r.hn || 0) / maxHn) * 64).toFixed(0)}px"></div><span class="odate">${wd(r.date)}</span><span class="ohs">${r.hs == null ? '–' : Math.round(r.hs)}</span></div>`).join('')}</div>
+    </div>`;
+  const age = (Date.now() - day(last.date)) / 864e5;
+  const warn = $('obs-warn');
+  if (age > 2.5) { warn.hidden = false; warn.textContent = `The latest reading is from ${lastLabel}. SLF may not have published a newer one yet.`; } else { warn.hidden = true; }
+  $('obs-note').innerHTML = `Read by hand each morning by the SLF observer at ${o.name} (${o.elevation} m), on a flat, wind-sheltered spot. Source: <a href="https://www.slf.ch" target="_blank" rel="noopener">WSL Institute for Snow and Avalanche Research SLF</a> · <a href="https://whiterisk.ch/en/conditions/measurements/station/BEOB/${o.code}" target="_blank" rel="noopener">station page on White Risk</a>.`;
+}
+
 function render() {
+  renderObs();
   const L = state.data.locations[state.loc];
   const { hours, days } = prepare(L);
   const now = nowIndex(hours, zurichNowKey());
