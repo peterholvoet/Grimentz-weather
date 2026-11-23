@@ -21,6 +21,7 @@
   --night: rgba(19, 32, 45, 0.06);
   --sun: #d98a00;
   --drop: #3b7fc4;
+  --d1: #6cbf3a; --d2: #ffe21a; --d3: #ff9a1f; --d4: #e53935; --d5: #b71c1c;
   --cloud: #8fa3b5;
   --font-body: 'IBM Plex Sans', system-ui, -apple-system, 'Segoe UI', sans-serif;
   --font-num: 'IBM Plex Mono', ui-monospace, Menlo, Consolas, monospace;
@@ -119,6 +120,26 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .obs-note { color: var(--muted); font-size: 13px; margin: 12px 0 0; }
 .obs-note a, .obs-warn a { color: var(--accent); }
 .obs-warn { color: var(--rain); font-size: 13px; margin: 8px 0 0; }
+.bul-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 10px; }
+.bul-head h2 { margin: 0; }
+.pill.official { background: transparent; border-color: var(--rain); color: var(--rain); }
+.bul-rating { display: flex; align-items: center; gap: 14px; margin: 6px 0; }
+.badge { min-width: 58px; height: 58px; padding: 0 8px; border-radius: 10px; display: flex; align-items: center; justify-content: center; font-family: var(--font-num); font-size: 28px; font-weight: 500; color: #13202d; flex: none; }
+.badge.l4, .badge.l5 { color: #fff; }
+.bul-word { font-size: 18px; font-weight: 600; }
+.bul-sub { color: var(--muted); font-size: 13px; }
+.bul-valid { color: var(--muted); font-size: 13px; margin: 8px 0 12px; }
+.probs { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 10px; margin-bottom: 10px; }
+.prob { border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; display: grid; grid-template-columns: 1fr 64px; gap: 4px 10px; align-items: start; }
+.prob h3 { margin: 0; font-size: 14px; font-weight: 600; }
+.prob .el { color: var(--muted); font-size: 12px; margin-top: 2px; }
+.prob .lv { display: inline-block; font-size: 11px; font-weight: 600; padding: 1px 7px; border-radius: 999px; color: #13202d; margin-top: 4px; }
+.prob .lv.l4, .prob .lv.l5 { color: #fff; }
+.prob svg { width: 64px; height: 64px; grid-row: 1 / span 2; grid-column: 2; }
+.prob p { grid-column: 1 / -1; margin: 4px 0 0; font-size: 13px; color: var(--muted); white-space: pre-line; }
+.bul details { border-top: 1px solid var(--line); padding: 8px 0; }
+.bul summary { cursor: pointer; font-weight: 500; font-size: 14px; }
+.bul details p { margin: 6px 0 2px; font-size: 13.5px; white-space: pre-line; }
 [hidden] { display: none !important; }
 @media (max-width: 640px) { .obs-body { grid-template-columns: 1fr; } }
 </style>
@@ -136,6 +157,8 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   <div class="notice" id="notice" role="status">Loading forecast…</div>
   <section class="tiles" id="tiles" aria-label="Summary"></section>
   <section aria-label="Daily forecast"><h2>Next 7 days</h2><div class="days" id="days"></div></section>
+
+  <section class="panel bul" id="bul" aria-label="Avalanche bulletin" hidden></section>
 
   <section class="panel" id="obs" aria-label="Measured snow at the Grimentz station" hidden>
     <div class="obs-head"><h2 id="obs-title">Measured at the station</h2><span class="pill manual">Manual measurement</span></div>
@@ -156,10 +179,10 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   </section>
 
   <div class="foot">
-    <span>Forecast refreshed three times a day, around 07:00, 13:00 and 17:00 Swiss winter time (an hour later in summer).</span>
+    <span>Forecast refreshed three times a day, usually between 07:00 and 08:00, 13:00 and 14:00, and 17:00 and 18:00 Swiss winter time (an hour later in summer).</span>
     <span>Snow measurements: <a href="https://www.slf.ch" target="_blank" rel="noopener">WSL Institute for Snow and Avalanche Research SLF</a> (open data, CC BY 4.0).</span>
     <span id="method"></span>
-    <span>This is not an avalanche bulletin. Check the SLF bulletin at <a href="https://www.slf.ch" target="_blank" rel="noopener">slf.ch</a> before leaving the piste.</span>
+    <span>The avalanche bulletin is a regional warning, not a local assessment. Check conditions before leaving the piste.</span>
     <span>Forecast data from <a href="https://www.meteoblue.com/nl/weer/week/grimentz_zwitserland_2660504" target="_blank" rel="noopener">meteoblue</a>, used for a non-commercial project.</span>
   </div>
 </main>
@@ -317,7 +340,66 @@ function renderObs() {
   $('obs-note').innerHTML = `Read by hand each morning by the SLF observer at ${o.name} (${o.elevation} m), on a flat, wind-sheltered spot. Source: <a href="https://www.slf.ch" target="_blank" rel="noopener">WSL Institute for Snow and Avalanche Research SLF</a> · <a href="https://whiterisk.ch/en/conditions/measurements/station/BEOB/${o.code}" target="_blank" rel="noopener">station page on White Risk</a>.`;
 }
 
+
+const LEVELS = { low: 1, moderate: 2, considerable: 3, high: 4, very_high: 5 };
+const SUBS = { plus: '+', neutral: '=', minus: '\u2212' };
+const PROBS = { new_snow: 'New snow', wind_slab: 'Wind slab', persistent_weak_layers: 'Persistent weak layers', wet_snow: 'Wet snow', gliding_snow: 'Gliding snow', favourable_situation: 'Favourable situation', cornices: 'Cornices', no_distinct_avalanche_problem: 'No distinct problem' };
+const ASPECTS = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'];
+const esc = t => String(t == null ? '' : t).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+const clean = t => esc(String(t || '').replace(/<br\s*\/?>/gi, '\n').replace(/<[^>]+>/g, '').trim());
+const cap = t => { const w = String(t || '').replace(/_/g, ' '); return w.charAt(0).toUpperCase() + w.slice(1); };
+function elevText(e) {
+  if (!e) return '';
+  const f = v => /^\d+$/.test(String(v)) ? `${v} m` : String(v);
+  if (e.lowerBound && e.upperBound) return `${f(e.lowerBound)} to ${f(e.upperBound)}`;
+  if (e.lowerBound) return `Above ${f(e.lowerBound)}`;
+  if (e.upperBound) return `Below ${f(e.upperBound)}`;
+  return '';
+}
+function rose(aspects, lvl) {
+  const on = new Set(aspects), c = 32, R = 29, r = 10;
+  const pt = (a, rad) => [c + rad * Math.sin(a), c - rad * Math.cos(a)];
+  const sectors = ASPECTS.map((n, i) => {
+    const a0 = (i - 0.5) * Math.PI / 4 + 0.02, a1 = (i + 0.5) * Math.PI / 4 - 0.02;
+    const [x0, y0] = pt(a0, R), [x1, y1] = pt(a1, R), [x2, y2] = pt(a1, r), [x3, y3] = pt(a0, r);
+    return `<path d="M${x0.toFixed(1)} ${y0.toFixed(1)}A${R} ${R} 0 0 1 ${x1.toFixed(1)} ${y1.toFixed(1)}L${x2.toFixed(1)} ${y2.toFixed(1)}A${r} ${r} 0 0 0 ${x3.toFixed(1)} ${y3.toFixed(1)}Z" fill="${on.has(n) ? `var(--d${lvl})` : 'var(--line)'}"/>`;
+  }).join('');
+  return `<svg viewBox="0 0 64 64" role="img" aria-label="Aspects: ${esc(aspects.join(', ') || 'none')}">${sectors}<text x="32" y="6" text-anchor="middle" style="font-size:7px">N</text></svg>`;
+}
+function renderBulletin() {
+  const b = state.data.bulletin, box = $('bul');
+  if (!b || !b.ratings || !b.ratings.length) { box.hidden = true; return; }
+  box.hidden = false;
+  const zt = (iso, o) => iso ? new Date(iso).toLocaleString('en-GB', Object.assign({ timeZone: 'Europe/Zurich' }, o)) : '';
+  const fmt = iso => zt(iso, { weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit', hour12: false });
+  const ratings = b.ratings.map(r => {
+    const n = LEVELS[r.mainValue || r.level] || 0, sub = SUBS[r.sub] || '';
+    const extra = [elevText(r.elevation), r.period && r.period !== 'all_day' ? cap(r.period) : ''].filter(Boolean).join(' \u00b7 ');
+    return `<div class="bul-rating"><div class="badge l${n}" style="background:var(--d${n || 1})">${n || '?'}${sub}</div><div><div class="bul-word">${esc(cap(r.level))}</div><div class="bul-sub">${esc(extra || 'All elevations')}</div></div></div>`;
+  }).join('');
+  const expired = b.valid_to && Date.now() > Date.parse(b.valid_to);
+  const probs = (b.problems || []).map(p => {
+    const n = LEVELS[p.level] || 1, el = elevText(p.elevation);
+    return `<div class="prob"><div><h3>${esc(PROBS[p.type] || cap(p.type))}</h3><div class="el">${esc(el)}</div><span class="lv l${n}" style="background:var(--d${n})">${esc(cap(p.level))}</span></div>${rose(p.aspects || [], n)}${p.comment ? `<p>${clean(p.comment)}</p>` : ''}</div>`;
+  });
+  const seen = new Set();
+  const probHtml = (b.problems || []).map((p, i) => {
+    const key = p.comment || '', dup = key && seen.has(key); seen.add(key);
+    return dup ? probs[i].replace(/<p>[\s\S]*<\/p>/, '') : probs[i];
+  }).join('');
+  const secs = (b.sections || []).map((s, i) => `<details${i === 0 ? ' open' : ''}><summary>${esc(s.title)}</summary><p>${clean(s.text)}</p></details>`).join('');
+  box.innerHTML = `
+    <div class="bul-head"><h2>Avalanche danger, ${esc(b.name)}</h2><span class="pill official">Official SLF warning</span></div>
+    ${ratings}
+    <p class="bul-valid">Valid ${esc(fmt(b.valid_from))} to ${esc(fmt(b.valid_to))}${b.next_update ? ` \u00b7 next update ${esc(fmt(b.next_update))}` : ''} (Swiss time)</p>
+    ${expired ? '<p class="obs-warn">This bulletin has expired. SLF may not have published a new one yet. Check White Risk.</p>' : ''}
+    ${probHtml ? `<div class="probs">${probHtml}</div>` : ''}
+    ${secs}
+    <p class="obs-note">Source: <a href="https://www.slf.ch" target="_blank" rel="noopener">WSL Institute for Snow and Avalanche Research SLF</a> (CC BY 4.0) \u00b7 <a href="https://whiterisk.ch/en/conditions/bulletin?regionId=${esc(b.region_id)}" target="_blank" rel="noopener">full bulletin on White Risk</a>. A regional bulletin cannot replace your own assessment on the slope.</p>`;
+}
+
 function render() {
+  renderBulletin();
   renderObs();
   const L = state.data.locations[state.loc];
   const { hours, days } = prepare(L);
