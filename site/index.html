@@ -140,6 +140,16 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .bul details { border-top: 1px solid var(--line); padding: 8px 0; }
 .bul summary { cursor: pointer; font-weight: 500; font-size: 14px; }
 .bul details p { margin: 6px 0 2px; font-size: 13.5px; white-space: pre-line; }
+.bul-cta { display: block; margin: 14px 0 6px; padding: 14px 16px; background: #ffe21a; color: #13202d !important; font-weight: 600; font-size: 16px; text-align: center; text-decoration: none; border-radius: 10px; border: 2px solid #13202d1a; }
+.bul-cta:hover, .bul-cta:focus-visible { background: #ffd000; }
+.hours { display: flex; gap: 6px; overflow-x: auto; padding: 2px 0 8px; scroll-snap-type: x proximity; }
+.hr { flex: 0 0 62px; scroll-snap-align: start; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 8px 4px; display: flex; flex-direction: column; align-items: center; gap: 4px; font-family: var(--font-num); font-variant-numeric: tabular-nums; font-size: 13px; }
+.hr.now { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
+.hr .t { color: var(--muted); font-size: 12px; }
+.hr .tmp { font-weight: 500; font-size: 15px; }
+.hr .sn { color: var(--accent); font-size: 11px; min-height: 14px; }
+.hr svg { width: 28px; height: 28px; }
+.hr .dl { color: var(--ink); font-family: var(--font-body); font-size: 11px; font-weight: 600; }
 [hidden] { display: none !important; }
 @media (max-width: 640px) { .obs-body { grid-template-columns: 1fr; } }
 </style>
@@ -156,6 +166,7 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
   <div class="notice" id="notice" role="status">Loading forecast…</div>
   <section class="tiles" id="tiles" aria-label="Summary"></section>
+  <section aria-label="Next 24 hours"><h2>Next 24 hours</h2><div class="hours" id="hours"></div></section>
   <section aria-label="Daily forecast"><h2>Next 7 days</h2><div class="days" id="days"></div></section>
 
   <section class="panel" id="obs" aria-label="Measured snow at the Grimentz station" hidden>
@@ -387,7 +398,8 @@ function renderBulletin() {
     const key = p.comment || '', dup = key && seen.has(key); seen.add(key);
     return dup ? probs[i].replace(/<p>[\s\S]*<\/p>/, '') : probs[i];
   }).join('');
-  const secs = (b.sections || []).map((s, i) => `<details${i === 0 ? ' open' : ''}><summary>${esc(s.title)}</summary><p>${clean(s.text)}</p></details>`).join('');
+  const SHOW = ['Summary', 'Avalanche activity', 'Snowpack'];
+  const secs = (b.sections || []).filter(s => SHOW.includes(s.title)).map((s, i) => `<details${i === 0 ? ' open' : ''}><summary>${esc(s.title)}</summary><p>${clean(s.text)}</p></details>`).join('');
   box.innerHTML = `
     <div class="bul-head"><h2>Avalanche danger, ${esc(b.name)}</h2><span class="pill official">Official SLF warning</span></div>
     ${ratings}
@@ -395,7 +407,8 @@ function renderBulletin() {
     ${expired ? '<p class="obs-warn">This bulletin has expired. SLF may not have published a new one yet. Check White Risk.</p>' : ''}
     ${probHtml ? `<div class="probs">${probHtml}</div>` : ''}
     ${secs}
-    <p class="obs-note">Source: <a href="https://www.slf.ch" target="_blank" rel="noopener">WSL Institute for Snow and Avalanche Research SLF</a> (CC BY 4.0) \u00b7 <a href="https://whiterisk.ch/en/conditions/bulletin?regionId=${esc(b.region_id)}" target="_blank" rel="noopener">full bulletin on White Risk</a>. A regional bulletin cannot replace your own assessment on the slope.</p>`;
+    <a class="bul-cta" href="https://whiterisk.ch/en/conditions/bulletin?regionId=${esc(b.region_id)}" target="_blank" rel="noopener">Read the full avalanche bulletin on White Risk \u2192</a>
+    <p class="obs-note">Source: <a href="https://www.slf.ch" target="_blank" rel="noopener">WSL Institute for Snow and Avalanche Research SLF</a> (CC BY 4.0) \u00b7 <a href="https://whiterisk.ch/en/conditions/bulletin?regionId=${esc(b.region_id)}" target="_blank" rel="noopener">White Risk</a>. A regional bulletin cannot replace your own assessment on the slope.</p>`;
 }
 
 function render() {
@@ -423,6 +436,14 @@ function render() {
     <div class="tile"><div class="k">Snow, next 24 h</div><div class="v">${fmt(sumCm(hours, now, 24))}<small>cm</small></div></div>
     <div class="tile"><div class="k">Snow, next 72 h</div><div class="v">${fmt(sumCm(hours, now, 72))}<small>cm</small></div></div>
     <div class="tile"><div class="k">Snow, rest of week</div><div class="v">${fmt(sumCm(hours, now, hours.length))}<small>cm</small></div></div>`;
+
+  $('hours').innerHTML = hours.slice(now, now + 24).map((x, i) => {
+    let k = kindOf(x.pic);
+    if (!x.day && k === 'sun') k = 'moon';
+    if (!x.day && k === 'partly') k = 'cloudy';
+    const label = i === 0 ? 'Now' : (x.hh === '00' ? wd(x.date) : x.hh + ':00');
+    return `<div class="hr${i === 0 ? ' now' : ''}"><span class="t">${label}</span>${icon(k)}<span class="tmp">${Math.round(x.T)}°</span><span class="sn">${x.cm >= 0.1 ? x.cm.toFixed(1) + ' cm' : ''}</span></div>`;
+  }).join('');
 
   $('days').innerHTML = days.map(x => {
     let kind = 'Dry', cls = '';
