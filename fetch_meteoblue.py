@@ -30,6 +30,9 @@ OUT = sys.argv[1] if len(sys.argv) > 1 else "site/data.json"
 # Official SLF avalanche bulletin (CAAML JSON, open data, CC BY 4.0) for the region Val d'Anniviers.
 BULLETIN_REGION = "CH-4124"
 BULLETIN_URL = "https://aws.slf.ch/api/bulletin/caaml/en/json"
+# Lowest point of the region in SLF's weather model (m). White Risk draws the snowfall level at this height
+# when it falls below the region ("below region").
+REGION_MIN_M = {"CH-4124": 560}
 
 
 def fetch(name, loc, key):
@@ -87,6 +90,20 @@ def fetch_bulletin():
     return None
 
 
+def snowfall_limit(b):
+    """Hourly snowfall level series (MeteoSwiss ICON-CH1 via SLF): [{t, m, below}], t in UTC.
+    m is the height in metres; below=True means the level lies under the lowest point of the region."""
+    periods = (((b.get("customData") or {}).get("CH") or {}).get("weather")) or []
+    points = {}
+    for p in periods:
+        for pt in ((p.get("timeSeries") or {}).get("snowfallLimit")) or []:
+            ts, m = pt.get("timestamp"), pt.get("elevationM")
+            below = m is None and pt.get("reasonForNull") == "BELOW_REGION"
+            if ts and (m is not None or below):
+                points[ts] = {"t": ts, "m": m, "below": below}
+    return [points[k] for k in sorted(points)]
+
+
 def reduce_bulletin(b, region):
     def ch(d):
         return ((d or {}).get("customData") or {}).get("CH") or {}
@@ -108,6 +125,8 @@ def reduce_bulletin(b, region):
         sections.append(("Tendency", (words + ". " + body).strip(". ").strip() if body else words))
     return {
         "region_id": BULLETIN_REGION,
+        "region_min": REGION_MIN_M.get(BULLETIN_REGION),
+        "snowfall_limit": snowfall_limit(b),
         "name": region.get("name", BULLETIN_REGION),
         "valid_from": (b.get("validTime") or {}).get("startTime"),
         "valid_to": (b.get("validTime") or {}).get("endTime"),
