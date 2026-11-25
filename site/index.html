@@ -151,6 +151,11 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .hr .sn { color: var(--accent); font-size: 11px; min-height: 14px; }
 .hr svg { width: 28px; height: 28px; }
 .hr .dl { color: var(--ink); font-family: var(--font-body); font-size: 11px; font-weight: 600; }
+.panel .lim { fill: none; stroke: var(--drop); stroke-width: 2; }
+.panel .ref { stroke: var(--muted); stroke-width: 1; stroke-dasharray: 2 3; }
+.panel .refmin { stroke: var(--muted); stroke-width: 1; stroke-dasharray: 1 3; opacity: .8; }
+.snow-now { font-family: var(--font-num); font-size: 22px; font-weight: 500; margin: 0 0 8px; font-variant-numeric: tabular-nums; }
+.snow-now small { font-family: var(--font-body); font-size: 12px; color: var(--muted); font-weight: 400; margin-left: 6px; }
 [hidden] { display: none !important; }
 @media (max-width: 640px) { .obs-body { grid-template-columns: 1fr; } }
 </style>
@@ -187,6 +192,14 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
     <h2>Temperature (°C)</h2>
     <div class="legend"><span><i style="background:var(--accent)"></i>Air</span><span><i style="background:var(--muted)"></i>Feels like</span><span><i style="background:var(--rain)"></i>0 °C</span></div>
     <div id="tempchart"></div>
+  </section>
+
+  <section class="panel" id="lim" aria-label="Snowfall level" hidden>
+    <h2>Snowfall level</h2>
+    <div class="snow-now" id="lim-now"></div>
+    <div class="legend"><span><i style="background:var(--drop)"></i>Snowfall level (m)</span><span><i style="background:var(--muted)"></i>Orée and Orzival</span><span><i style="background:var(--night)"></i>Night</span></div>
+    <div id="limchart"></div>
+    <p class="obs-note" id="lim-note"></p>
   </section>
 
   <section class="panel bul" id="bul" aria-label="Avalanche bulletin" hidden></section>
@@ -462,6 +475,7 @@ function render() {
     </div>`;
   }).join('');
 
+  renderLimit(hours, now);
   $('snowchart').innerHTML = snowChart(hours, now);
   $('tempchart').innerHTML = tempChart(hours, now);
   $('method').textContent = 'Snow in cm is an estimate: precipitation (mm) × snow fraction × a snow-to-water ratio from 8:1 at 0 °C to 16:1 at -10 °C. Real depth varies with wind and settling. Reliability is meteoblue\'s predictability for the day.';
@@ -501,6 +515,39 @@ function snowChart(hours, now) {
     <text x="${PL - 6}" y="${H}" text-anchor="end">0</text><text x="${PL - 6}" y="10" text-anchor="end">${hMax} cm/h</text>
     <text x="${W - PR + 6}" y="${H}">0</text><text x="${W - PR + 6}" y="10">${cMax} cm</text>
     ${bars}<path class="cum" d="${line}"/></svg>`;
+}
+
+const zKey = iso => new Date(iso).toLocaleString('sv-SE', { timeZone: 'Europe/Zurich' }).slice(0, 13) + ':00';
+function renderLimit(hours, now) {
+  const b = state.data.bulletin, box = $('lim');
+  const pts = (b && b.snowfall_limit) || [];
+  const minM = (b && b.region_min) || 0;
+  const byKey = new Map(pts.map(p => [zKey(p.t), p.below ? { m: minM, below: true } : { m: p.m, below: false }]));
+  const vals = hours.map(x => byKey.get(x.t.replace('T', ' ')) || null);
+  if (!vals.some(Boolean)) { box.hidden = true; return; }
+  box.hidden = false;
+  const loc = state.data.locations;
+  const refs = ['village', 'summit'].filter(k => loc[k] && loc[k].metadata).map(k => ({ m: loc[k].metadata.height, name: LOCS[k] }));
+  const nums = vals.filter(Boolean).map(v => v.m);
+  const top = Math.max(...nums);
+  const shown = refs.filter(r => r.m <= top + 500);
+  const lo = Math.floor(Math.min(...nums, minM || Infinity, ...shown.map(r => r.m)) / 200) * 200;
+  const hi = Math.ceil(Math.max(...nums, ...shown.map(r => r.m)) / 200) * 200 + 200;
+  const f = frame(hours, now);
+  const y = v => H - ((v - lo) / (hi - lo)) * (H - 8);
+  let d = '', gap = true;
+  vals.forEach((v, i) => { if (!v) { gap = true; return; } d += `${gap ? 'M' : 'L'}${(f.x0(i) + f.bw / 2).toFixed(1)},${y(v.m).toFixed(1)} `; gap = false; });
+  const hover = vals.map((v, i) => v ? `<rect x="${f.x0(i).toFixed(1)}" y="0" width="${f.bw.toFixed(1)}" height="${H}" fill="transparent"><title>${wd(hours[i].date)} ${hours[i].hh}:00 · ${v.below ? 'below ' + minM + ' m (lowest point of the region)' : v.m + ' m'}</title></rect>` : '').join('');
+  const refLines = shown.map(r => `<line class="ref" x1="${PL}" x2="${W - PR}" y1="${y(r.m).toFixed(1)}" y2="${y(r.m).toFixed(1)}"/><text x="${PL + 4}" y="${(y(r.m) - 4).toFixed(1)}">${esc(r.name)} ${r.m} m</text>`).join('');
+  const minLine = minM ? `<line class="refmin" x1="${PL}" x2="${W - PR}" y1="${y(minM).toFixed(1)}" y2="${y(minM).toFixed(1)}"/>` : '';
+  $('limchart').innerHTML = `<svg viewBox="0 0 ${W} ${H + 18}" role="img" aria-label="Hourly snowfall level in metres">
+    ${f.bg}
+    <line class="axis" x1="${PL}" x2="${W - PR}" y1="${H}" y2="${H}"/>
+    <text x="${PL - 6}" y="${H}" text-anchor="end">${lo}</text><text x="${PL - 6}" y="10" text-anchor="end">${hi} m</text>
+    ${minLine}${refLines}<path class="lim" d="${d}"/>${hover}</svg>`;
+  const cur = vals[now] || vals.find(Boolean);
+  $('lim-now').innerHTML = cur ? `${cur.below ? 'Below ' + minM : cur.m}<small>m, ${vals[now] ? 'now' : 'latest value'}</small>` : '';
+  $('lim-note').innerHTML = `Height where half the precipitation falls as snow and half as rain, for the whole region ${esc(b.name)}. Dotted line near the bottom: lowest point of the region in the weather model${minM ? ` (${minM} m)` : ''}; when the level is lower, all precipitation falls as snow. Data: MeteoSwiss ICON-CH1 (KENDA-CH1 for the past), calculated by <a href="https://www.slf.ch" target="_blank" rel="noopener">SLF</a> when each bulletin is prepared (CC BY 4.0), so it updates with the bulletin, not every hour.`;
 }
 
 function tempChart(hours, now) {
