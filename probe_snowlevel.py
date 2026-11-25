@@ -1,57 +1,68 @@
-"""One-off probe: where does White Risk get its 'Snowfall level' chart from? Prints matches only."""
-import json, re, urllib.request, urllib.parse
+"""One-off probe 2: find the data address behind White Risk's 'Snowfall level' chart."""
+import hashlib, re, urllib.parse, urllib.request
 
 UA = {"User-Agent": "Mozilla/5.0 grimentz-dashboard-probe"}
 
-def get(url, limit=8_000_000):
+def get(url, limit=12_000_000):
     req = urllib.request.Request(url, headers=UA)
     with urllib.request.urlopen(req, timeout=60) as r:
         return r.read(limit).decode("utf-8", "replace")
 
 PAGE = "https://whiterisk.ch/en/conditions/bulletin?regionId=CH-4124"
-PATTERN = re.compile(r"snow[-_ ]?(fall)?[-_ ]?(level|line|limit)|snowfall_?level|freezing|schneefallgrenze", re.I)
+html = get(PAGE)
+print("html bytes:", len(html))
+tags = re.findall(r'<(?:script|link)[^>]+>', html)
+srcs = []
+for t in tags:
+    m = re.search(r'(?:src|href)="([^"]+\.(?:js|mjs))"', t)
+    if m:
+        srcs.append(m.group(1))
+print("script/js references in html:")
+for s in srcs:
+    print("  ", s)
+# inline hints
+for m in list(re.finditer(r'snow[^"<>\s]{0,30}(?:level|line|limit)|schneefallgrenze', html, re.I))[:10]:
+    print("html hint:", html[max(0, m.start()-80):m.end()+80].replace("\n", " "))
 
-print("=== page ===")
-try:
-    html = get(PAGE)
-    print("html bytes:", len(html))
-    scripts = re.findall(r'<script[^>]+src="([^"]+)"', html) + re.findall(r'href="([^"]+\.js)"', html)
-except Exception as e:
-    print("page failed:", type(e).__name__, e)
-    html, scripts = "", []
-
-seen = set()
-queue = [urllib.parse.urljoin(PAGE, s) for s in scripts]
-print("scripts:", len(queue))
-while queue and len(seen) < 40:
+PATTERN = re.compile(r"snow[-_ ]?(?:fall)?[-_ ]?(?:level|line|limit)|schneefallgrenze|snowlevel|snowfalllevel|freezing", re.I)
+seen_hash, seen_url, queue = set(), set(), []
+for s in srcs:
+    queue.append(urllib.parse.urljoin("https://whiterisk.ch/", s))
+    queue.append(urllib.parse.urljoin(PAGE, s))
+n = 0
+while queue and n < 60:
     u = queue.pop(0)
-    if u in seen or "whiterisk" not in u and "slf" not in u:
+    if u in seen_url:
         continue
-    seen.add(u)
+    seen_url.add(u)
     try:
         js = get(u)
     except Exception as e:
         print("skip", u, type(e).__name__)
         continue
+    h = hashlib.md5(js.encode()).hexdigest()
+    if h in seen_hash or js.lstrip().startswith("<!"):
+        print("same-as-shell/duplicate:", u)
+        continue
+    seen_hash.add(h)
+    n += 1
     hits = list(PATTERN.finditer(js))
-    apis = set(re.findall(r'https?://[a-z0-9.\-]*(?:slf|whiterisk|wsl)[a-z0-9.\-]*/[A-Za-z0-9_\-./{}$]*', js))
     print(f"\n--- {u} ({len(js)} bytes, {len(hits)} matches)")
-    for h in hits[:6]:
-        print("   ..." + js[max(0, h.start() - 120):h.end() + 160].replace("\n", " ") + "...")
-    for a in sorted(apis)[:25]:
-        print("   url:", a)
-    # follow chunk references
-    for c in re.findall(r'["\'](/?[A-Za-z0-9_\-./]+\.js)["\']', js)[:30]:
-        queue.append(urllib.parse.urljoin(u, c))
+    for m in hits[:8]:
+        print("   ..." + js[max(0, m.start()-200):m.end()+260].replace("\n", " ") + "...")
+    for m in list(re.finditer(r'(?:api/v2|reply/public/api/v2|aws\.slf\.ch/api)[A-Za-z0-9_\-./{}$`\'"+ ]{0,80}', js))[:25]:
+        print("   api:", m.group(0))
+    base = u.rsplit("/", 1)[0] + "/"
+    for c in set(re.findall(r'["\'`]\.?/?((?:chunk|main|polyfills)-[A-Za-z0-9_]+\.js)["\'`]', js)):
+        queue.append(base + c)
+        queue.append("https://whiterisk.ch/" + c)
 
-print("\n=== measurement-api docs ===")
-for p in ["/public/api/docs", "/public/api/openapi.json", "/openapi.json", "/public/api/swagger.json", "/docs", "/public/api/"]:
-    u = "https://measurement-api.slf.ch" + p
+print("\n=== candidate API roots ===")
+for u in ["https://whiterisk.ch/api/v2", "https://whiterisk.ch/api/v2/openapi.json", "https://whiterisk.ch/api/v2/docs",
+          "https://pro.slf.ch/reply/public/api/v2", "https://pro.slf.ch/reply/public/api/v2/openapi.json",
+          "https://aws.slf.ch/api/bulletin", "https://whiterisk.ch/api/current-avalanches"]:
     try:
-        t = get(u, 400000)
-        print(u, "OK", len(t))
-        for m in list(re.finditer(r'"(/[^"]*)"\s*:\s*\{', t))[:80]:
-            print("   path", m.group(1))
-        break
+        t = get(u, 300000)
+        print("OK ", u, len(t), t[:300].replace("\n", " "))
     except Exception as e:
-        print(u, type(e).__name__)
+        print("ERR", u, type(e).__name__, getattr(e, "code", ""))
