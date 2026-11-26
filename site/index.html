@@ -152,6 +152,631 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .hr svg { width: 28px; height: 28px; }
 .hr .dl { color: var(--ink); font-family: var(--font-body); font-size: 11px; font-weight: 600; }
 .panel .lim { fill: none; stroke: var(--drop); stroke-width: 2; }
+.panel .lim.est { stroke-dasharray: 6 4; opacity: .85; }
+.panel .ref { stroke: var(--muted); stroke-width: 1; stroke-dasharray: 2 3; }
+.panel .refmin { stroke: var(--muted); stroke-width: 1; stroke-dasharray: 1 3; opacity: .8; }
+#limchart .panel text, #limchart text { font-size: 19px; }
+.snow-now { font-family: var(--font-num); font-size: 22px; font-weight: 500; margin: 0 0 8px; font-variant-numeric: tabular-nums; }
+.snow-now small { font-family: var(--font-body); font-size: 12px; color: var(--muted); font-weight: 400; margin-left: 6px; }
+[hidden] { display: none !important; }
+@media (max-width: 640px) { .obs-body { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <div>
+      <h1>Grimentz Snow</h1>
+      <p class="sub" id="sub">Val d'Anniviers, Valais</p>
+    </div>
+    <div class="seg" id="elev" role="group" aria-label="Elevation" hidden></div>
+  </header>
+
+  <div class="notice" id="notice" role="status">Loading forecast…</div>
+  <section class="tiles" id="tiles" aria-label="Summary"></section>
+  <section aria-label="Next 24 hours"><h2>Next 24 hours</h2><div class="hours" id="hours"></div></section>
+  <section aria-label="Daily forecast"><h2>Next 7 days</h2><div class="days" id="days"></div></section>
+
+  <section class="panel" id="obs" aria-label="Measured snow at the Grimentz station" hidden>
+    <div class="obs-head"><h2 id="obs-title">Measured at the station</h2><span class="pill manual">Manual measurement</span></div>
+    <div class="obs-body" id="obs-body"></div>
+    <p class="obs-warn" id="obs-warn" hidden></p>
+    <p class="obs-note obs-link"><a href="https://whiterisk.ch/en/conditions/measurements/station/IMIS/ANV2" target="_blank" rel="noopener">Snow depth at Orzival, automatic station ANV2 on White Risk →</a></p>
+    <p class="obs-note" id="obs-note"></p>
+  </section>
+
+  <section class="panel" aria-label="Hourly snowfall">
+    <h2>Hourly snowfall, estimated</h2>
+    <div class="legend"><span><i style="background:var(--accent)"></i>Snow per hour (cm)</span><span><i style="background:var(--ink)"></i>Running total (cm)</span><span><i style="background:var(--night)"></i>Night</span></div>
+    <div id="snowchart"></div>
+  </section>
+  <section class="panel" aria-label="Hourly temperature">
+    <h2>Temperature (°C)</h2>
+    <div class="legend"><span><i style="background:var(--accent)"></i>Air</span><span><i style="background:var(--muted)"></i>Feels like</span><span><i style="background:var(--rain)"></i>0 °C</span></div>
+    <div id="tempchart"></div>
+  </section>
+
+  <section class="panel" id="lim" aria-label="Snowfall level" hidden>
+    <h2>Snowfall level</h2>
+    <div class="snow-now" id="lim-now"></div>
+    <div class="legend"><span><i style="background:var(--drop)"></i>SLF snowfall level (m)</span><span id="lim-legend-est"><i style="background:repeating-linear-gradient(90deg,var(--drop) 0 4px,transparent 4px 7px)"></i>Estimate from forecast</span><span><i style="background:var(--muted)"></i>Orée and Orzival</span></div>
+    <div id="limchart"></div>
+    <p class="obs-note" id="lim-note"></p>
+  </section>
+
+  <section class="panel bul" id="bul" aria-label="Avalanche bulletin" hidden></section>
+
+  <div class="foot">
+    <span>Forecast refreshed three times a day, usually between 07:00 and 08:00, 13:00 and 14:00, and 17:00 and 18:00 Swiss winter time (an hour later in summer).</span>
+    <span>Snow measurements: <a href="https://www.slf.ch" target="_blank" rel="noopener">WSL Institute for Snow and Avalanche Research SLF</a> (open data, CC BY 4.0).</span>
+    <span id="method"></span>
+    <span>The avalanche bulletin is a regional warning, not a local assessment. Check conditions before leaving the piste.</span>
+    <span>Forecast data from <a href="https://www.meteoblue.com/nl/weer/week/grimentz_zwitserland_2660504"_blank" rel="noopener">meteoblue</a>, used for a non-commercial project.</span>
+  </div>
+</main>
+
+<script>
+// ---- pure calculations (also run in Node for testing) ----
+// BEGIN PURE
+// Snow-to-water ratio: 8:1 at 0 °C, rising to 16:1 at -10 °C or colder, never below 6:1.
+const ratio = T => Math.min(16, Math.max(6, 8 - 0.8 * T));
+
+function prepare(L) {
+  const h = L.data_1h, d = L.data_day;
+  const hours = h.time.map((t, i) => {
+    const p = h.precipitation[i] || 0;
+    const sf = h.snowfraction[i] || 0;
+    const T = h.temperature[i];
+    return {
+      t, date: t.slice(0, 10), hh: t.slice(11, 13), T, felt: h.felttemperature[i],
+      precip: p, sf, cm: p * sf * ratio(T) / 10, rainMm: p * (1 - sf),
+      day: h.isdaylight[i], pp: h.precipitation_probability[i], pic: h.pictocode[i],
+    };
+  });
+  const days = d.time.map((date, i) => {
+    const hrs = hours.filter(x => x.date === date);
+    return {
+      date, cm: hrs.reduce((s, x) => s + x.cm, 0), mm: d.precipitation[i],
+      tmax: d.temperature_max[i], tmin: d.temperature_min[i], sf: d.snowfraction[i],
+      pred: d.predictability[i], windKmh: d.windspeed_max[i] * 3.6,
+      kind: dayKind(hrs, d.precipitation[i], d.snowfraction[i]),
+    };
+  });
+  return { hours, days };
+}
+
+// meteoblue hourly pictocode (1-35) -> icon kind
+function kindOf(c) {
+  if (c >= 1 && c <= 6) return 'sun';
+  if (c >= 7 && c <= 12) return 'partly';
+  if (c >= 13 && c <= 15) return 'sun';
+  if (c >= 16 && c <= 18) return 'fog';
+  if (c >= 19 && c <= 21) return 'cloudy';
+  if (c === 22) return 'overcast';
+  if (c === 23 || c === 25 || c === 31 || c === 33) return 'rain';
+  if (c === 24 || c === 26 || c === 29 || c === 32 || c === 34) return 'snow';
+  if (c === 27 || c === 28 || c === 30) return 'thunder';
+  if (c === 35) return 'mixed';
+  return 'cloudy';
+}
+// One icon per day: precipitation decides first, otherwise the most common daytime sky.
+function dayKind(hrs, mm, sf) {
+  if (mm >= 0.5) return sf >= 0.8 ? 'snow' : (sf >= 0.2 ? 'mixed' : 'rain');
+  const pool = hrs.filter(x => x.day === 1);
+  const src = pool.length ? pool : hrs;
+  const count = {};
+  src.forEach(x => { const k = kindOf(x.pic); if (!['rain', 'snow', 'mixed', 'thunder'].includes(k)) count[k] = (count[k] || 0) + 1; });
+  const best = Object.entries(count).sort((a, b) => b[1] - a[1])[0];
+  return best ? best[0] : 'cloudy';
+}
+
+function nowIndex(hours, nowKey) {
+  let i = hours.findIndex(x => x.t >= nowKey);
+  return i < 0 ? hours.length - 1 : i;
+}
+const sumCm = (hours, from, n) => hours.slice(from, from + n).reduce((s, x) => s + x.cm, 0);
+// END PURE
+
+const CLOUD = 'M9.5 25a5 5 0 0 1-.4-10 7 7 0 0 1 13.3-1.5A5.5 5.5 0 0 1 23 25z';
+const RAYS = (cx, cy, r1, r2) => [0, 45, 90, 135, 180, 225, 270, 315].map(a => {
+  const t = a * Math.PI / 180, c = Math.cos(t), s = Math.sin(t);
+  return `<line class="s" x1="${(cx + c * r1).toFixed(1)}" y1="${(cy + s * r1).toFixed(1)}" x2="${(cx + c * r2).toFixed(1)}" y2="${(cy + s * r2).toFixed(1)}"/>`;
+}).join('');
+const FLAKE = (x, y) => `<g class="f"><line x1="${x}" y1="${y - 2.6}" x2="${x}" y2="${y + 2.6}"/><line x1="${x - 2.3}" y1="${y - 1.3}" x2="${x + 2.3}" y2="${y + 1.3}"/><line x1="${x - 2.3}" y1="${y + 1.3}" x2="${x + 2.3}" y2="${y - 1.3}"/></g>`;
+const ICONS = {
+  sun: `<circle class="sf" cx="16" cy="16" r="5.5"/>${RAYS(16, 16, 8.5, 12)}`,
+  moon: `<path class="b" d="M20.5 6.5a10 10 0 1 0 5 17.2A8.2 8.2 0 0 1 20.5 6.5z"/>`,
+  partly: `<circle class="sf" cx="21" cy="11" r="4.2"/>${RAYS(21, 11, 6.6, 9.4)}<path class="c" transform="translate(-1 2)" d="${CLOUD}"/>`,
+  cloudy: `<path class="c" d="${CLOUD}"/>`,
+  overcast: `<path class="c" transform="translate(4 -4) scale(.8)" d="${CLOUD}" style="opacity:.7"/><path class="c" transform="translate(0 1)" d="${CLOUD}"/>`,
+  fog: `<path class="c" transform="translate(0 -3)" d="${CLOUD}"/><line class="m" x1="7" y1="26" x2="25" y2="26"/><line class="m" x1="10" y1="29.5" x2="22" y2="29.5"/>`,
+  rain: `<path class="c" transform="translate(0 -3)" d="${CLOUD}"/><line class="d" x1="11" y1="25" x2="9.5" y2="29"/><line class="d" x1="16.5" y1="25" x2="15" y2="29"/><line class="d" x1="22" y1="25" x2="20.5" y2="29"/>`,
+  snow: `<path class="c" transform="translate(0 -3)" d="${CLOUD}"/>${FLAKE(10.5, 27)}${FLAKE(16.5, 27)}${FLAKE(22.5, 27)}`,
+  mixed: `<path class="c" transform="translate(0 -3)" d="${CLOUD}"/><line class="d" x1="11" y1="25" x2="9.5" y2="29"/>${FLAKE(16.5, 27)}<line class="d" x1="22.5" y1="25" x2="21" y2="29"/>`,
+  thunder: `<path class="c" transform="translate(0 -3)" d="${CLOUD}"/><polygon class="b" points="17,22 12,28.5 15.6,28.5 14,32 20,25.5 16.4,25.5 18.5,22"/>`,
+};
+const LABEL = { sun: 'Sunny', moon: 'Clear night', partly: 'Partly cloudy', cloudy: 'Mostly cloudy', overcast: 'Overcast', fog: 'Fog', rain: 'Rain', snow: 'Snow', mixed: 'Rain and snow', thunder: 'Thunderstorm' };
+const icon = (k, title) => `<svg class="ico" viewBox="0 0 32 32" role="img" aria-label="${title || LABEL[k]}"><title>${title || LABEL[k]}</title>${ICONS[k]}</svg>`;
+
+const $ = id => document.getElementById(id);
+const fmt = v => v < 0.05 ? '0' : (v >= 10 ? String(Math.round(v)) : v.toFixed(1));
+const LOCS = { village: 'Orée', summit: 'Orzival' };
+const state = { data: null, loc: 'village' };
+
+function wd(date, long) {
+  return new Date(date + 'T12:00:00').toLocaleDateString('en-GB', { weekday: long ? 'long' : 'short' });
+}
+function zurichNowKey() {
+  return new Date().toLocaleString('sv-SE', { timeZone: 'Europe/Zurich' }).slice(0, 13).replace(' ', ' ') + ':00';
+}
+
+async function init() {
+  try {
+    const res = await fetch('data.json', { cache: 'no-store' });
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    state.data = await res.json();
+  } catch (e) {
+    $('notice').className = 'notice err';
+    $('notice').textContent = 'Could not load data.json. If you opened this file from your disk, serve the folder with "python3 -m http.server" or use the GitHub Pages address.';
+    return;
+  }
+  const names = Object.keys(LOCS).filter(k => state.data.locations[k]);
+  if (names.length > 1) {
+    const box = $('elev');
+    box.hidden = false;
+    box.innerHTML = names.map(k => {
+      const m = state.data.locations[k].metadata.height;
+      return `<button data-k="${k}" aria-pressed="${k === state.loc}">${LOCS[k]} ${m} m</button>`;
+    }).join('');
+    box.querySelectorAll('button').forEach(b => b.onclick = () => {
+      state.loc = b.dataset.k;
+      box.querySelectorAll('button').forEach(x => x.setAttribute('aria-pressed', String(x === b)));
+      render();
+    });
+  }
+  render();
+}
+
+const whole = v => String(Math.round(v || 0));
+function renderObs() {
+  const o = state.data.observation, box = $('obs');
+  if (!o || !o.rows || !o.rows.length) { box.hidden = true; return; }
+  box.hidden = false;
+  const rows = o.rows.slice(-7), last = rows[rows.length - 1];
+  const day = d => Date.parse(d + 'T12:00:00Z');
+  const sumN = n => rows.filter(r => (day(last.date) - day(r.date)) / 864e5 < n).reduce((s, r) => s + (r.hn || 0), 0);
+  const maxHn = Math.max(5, ...rows.map(r => r.hn || 0));
+  $('obs-title').textContent = `Measured at the ${o.name} station`;
+  const lastLabel = `${wd(last.date, true)} ${Number(last.date.slice(8))} ${new Date(last.date + 'T12:00:00').toLocaleDateString('en-GB', { month: 'long' })}`;
+  $('obs-body').innerHTML = `
+    <div>
+      <div class="obs-legend">Latest reading: ${lastLabel}, morning</div>
+      <div class="obs-stats">
+        <div><span class="n">${last.hs == null ? '–' : Math.round(last.hs)}<small>cm</small></span><span class="l">Snow depth</span></div>
+        <div><span class="n">${whole(last.hn)}<small>cm</small></span><span class="l">New snow, 24 h</span></div>
+        <div><span class="n">${whole(sumN(3))}<small>cm</small></span><span class="l">New snow, 3 days</span></div>
+        <div><span class="n">${whole(sumN(7))}<small>cm</small></span><span class="l">New snow, 7 days</span></div>
+      </div>
+    </div>
+    <div>
+      <div class="obs-legend">Bars: new snow in 24 h (cm). Below each day: snow depth on the ground (cm).</div>
+      <div class="obs-cols">${rows.map(r => `<div class="ocol"><span class="oval">${whole(r.hn)}</span><div class="obar" style="height:${(((r.hn || 0) / maxHn) * 64).toFixed(0)}px"></div><span class="odate">${wd(r.date)}</span><span class="ohs">${r.hs == null ? '–' : Math.round(r.hs)}</span></div>`).join('')}</div>
+    </div>`;
+  const age = (Date.now() - day(last.date)) / 864e5;
+  const warn = $('obs-warn');
+  if (age > 2.5) { warn.hidden = false; warn.textContent = `The latest reading is from ${lastLabel}. SLF may not have published a newer one yet.`; } else { warn.hidden = true; }
+  $('obs-note').innerHTML = `Read by hand each morning by the SLF observer at ${o.name} (${o.elevation} m), on a flat, wind-sheltered spot. Source: <a href="https://www.slf.ch" target="_blank" rel="noopener">WSL Institute for Snow and Avalanche Research SLF</a> · <a href="https://whiterisk.ch/en/conditions/measurements/station/BEOB/${o.code}" target="_blank" rel="noopener">station page on White Risk</a>.`;
+}
+
+
+const LEVELS = { low: 1, moderate: 2, considerable: 3, high: 4, very_high: 5 };
+const SUBS = { plus: '+', neutral: '=', minus: '\u2212' };
+const PROBS = { new_snow: 'New snow', wind_slab: 'Wind slab', persistent_weak_layers: 'Persistent weak layers', wet_snow: 'Wet snow', gliding_snow: 'Gliding snow', favourable_situation: 'Favourable situation', cornices: 'Cornices', no_distinct_avalanche_problem: 'No distinct problem' };
+const ASPECTS = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'];
+const esc = t => String(t == null ? '' : t).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+const clean = t => esc(String(t || '').replace(/<br\s*\/?>/gi, '\n').replace(/<[^>]+>/g, '').trim());
+const cap = t => { const w = String(t || '').replace(/_/g, ' '); return w.charAt(0).toUpperCase() + w.slice(1); };
+function elevText(e) {
+  if (!e) return '';
+  const f = v => /^\d+$/.test(String(v)) ? `${v} m` : String(v);
+  if (e.lowerBound && e.upperBound) return `${f(e.lowerBound)} to ${f(e.upperBound)}`;
+  if (e.lowerBound) return `Above ${f(e.lowerBound)}`;
+  if (e.upperBound) return `Below ${f(e.upperBound)}`;
+  return '';
+}
+function rose(aspects, lvl) {
+  const on = new Set(aspects), c = 32, R = 29, r = 10;
+  const pt = (a, rad) => [c + rad * Math.sin(a), c - rad * Math.cos(a)];
+  const sectors = ASPECTS.map((n, i) => {
+    const a0 = (i - 0.5) * Math.PI / 4 + 0.02, a1 = (i + 0.5) * Math.PI / 4 - 0.02;
+    const [x0, y0] = pt(a0, R), [x1, y1] = pt(a1, R), [x2, y2] = pt(a1, r), [x3, y3] = pt(a0, r);
+    return `<path d="M${x0.toFixed(1)} ${y0.toFixed(1)}A${R} ${R} 0 0 1 ${x1.toFixed(1)} ${y1.toFixed(1)}L${x2.toFixed(1)} ${y2.toFixed(1)}A${r} ${r} 0 0 0 ${x3.toFixed(1)} ${y3.toFixed(1)}Z" fill="${on.has(n) ? `var(--d${lvl})` : 'var(--line)'}"/>`;
+  }).join('');
+  return `<svg viewBox="0 0 64 64" role="img" aria-label="Aspects: ${esc(aspects.join(', ') || 'none')}">${sectors}<text x="32" y="6" text-anchor="middle" style="font-size:7px">N</text></svg>`;
+}
+function renderBulletin() {
+  const b = state.data.bulletin, box = $('bul');
+  if (!b || !b.ratings || !b.ratings.length) { box.hidden = true; return; }
+  box.hidden = false;
+  const zt = (iso, o) => iso ? new Date(iso).toLocaleString('en-GB', Object.assign({ timeZone: 'Europe/Zurich' }, o)) : '';
+  const fmt = iso => zt(iso, { weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit', hour12: false });
+  const ratings = b.ratings.map(r => {
+    const n = LEVELS[r.mainValue || r.level] || 0, sub = SUBS[r.sub] || '';
+    const extra = [elevText(r.elevation), r.period && r.period !== 'all_day' ? cap(r.period) : ''].filter(Boolean).join(' \u00b7 ');
+    return `<div class="bul-rating"><div class="badge l${n}" style="background:var(--d${n || 1})">${n || '?'}${sub}</div><div><div class="bul-word">${esc(cap(r.level))}</div><div class="bul-sub">${esc(extra || 'All elevations')}</div></div></div>`;
+  }).join('');
+  const expired = b.valid_to && Date.now() > Date.parse(b.valid_to);
+  const probs = (b.problems || []).map(p => {
+    const n = LEVELS[p.level] || 1, el = elevText(p.elevation);
+    return `<div class="prob"><div><h3>${esc(PROBS[p.type] || cap(p.type))}</h3><div class="el">${esc(el)}</div><span class="lv l${n}" style="background:var(--d${n})">${esc(cap(p.level))}</span></div>${rose(p.aspects || [], n)}${p.comment ? `<p>${clean(p.comment)}</p>` : ''}</div>`;
+  });
+  const seen = new Set();
+  const probHtml = (b.problems || []).map((p, i) => {
+    const key = p.comment || '', dup = key && seen.has(key); seen.add(key);
+    return dup ? probs[i].replace(/<p>[\s\S]*<\/p>/, '') : probs[i];
+  }).join('');
+  const SHOW = ['Summary', 'Avalanche activity', 'Snowpack'];
+  const secs = (b.sections || []).filter(s => SHOW.includes(s.title)).map((s, i) => `<details${i === 0 ? ' open' : ''}><summary>${esc(s.title)}</summary><p>${clean(s.text)}</p></details>`).join('');
+  box.innerHTML = `
+    <div class="bul-head"><h2>Avalanche danger, ${esc(b.name)}</h2><span class="pill official">Official SLF warning</span></div>
+    ${ratings}
+    <p class="bul-valid">Valid ${esc(fmt(b.valid_from))} to ${esc(fmt(b.valid_to))}${b.next_update ? ` \u00b7 next update ${esc(fmt(b.next_update))}` : ''} (Swiss time)</p>
+    ${expired ? '<p class="obs-warn">This bulletin has expired. SLF may not have published a new one yet. Check White Risk.</p>' : ''}
+    ${probHtml ? `<div class="probs">${probHtml}</div>` : ''}
+    ${secs}
+    <a class="bul-cta" href="https://whiterisk.ch/en/conditions/bulletin?regionId=${esc(b.region_id)}" target="_blank" rel="noopener">Read the full avalanche bulletin on White Risk \u2192</a>
+    <p class="obs-note">Source: <a href="https://www.slf.ch" target="_blank" rel="noopener">WSL Institute for Snow and Avalanche Research SLF</a> (CC BY 4.0) \u00b7 <a href="https://whiterisk.ch/en/conditions/bulletin?regionId=${esc(b.region_id)}" target="_blank" rel="noopener">White Risk</a>. A regional bulletin cannot replace your own assessment on the slope.</p>`;
+}
+
+function render() {
+  renderBulletin();
+  renderObs();
+  const L = state.data.locations[state.loc];
+  const { hours, days } = prepare(L);
+  const now = nowIndex(hours, zurichNowKey());
+  const cur = hours[now];
+  const m = L.metadata;
+
+  const fetched = new Date(state.data.fetched_at);
+  const ageH = (Date.now() - fetched.getTime()) / 36e5;
+  const stamp = fetched.toLocaleString('en-GB', { timeZone: 'Europe/Zurich', weekday: 'short', hour: '2-digit', minute: '2-digit' });
+  $('sub').textContent = `Grimentz, Val d'Anniviers · ${m.height} m · updated ${stamp} (Swiss time)`;
+  const notice = $('notice');
+  if (ageH > 18) { notice.className = 'notice warn'; notice.textContent = `This forecast is ${Math.round(ageH)} hours old. The scheduled update may have failed.`; }
+  else { notice.className = 'notice'; notice.textContent = ''; }
+
+  let nowKind = kindOf(cur.pic);
+  if (!cur.day && nowKind === 'sun') nowKind = 'moon';
+  if (!cur.day && nowKind === 'partly') nowKind = 'cloudy';
+  $('tiles').innerHTML = `
+    <div class="tile"><div class="k">Now</div><div class="v withico">${icon(nowKind)}<span>${Math.round(cur.T)}°<small>${LABEL[nowKind]}</small></span></div></div>
+    <div class="tile"><div class="k">Snow, next 24 h</div><div class="v">${fmt(sumCm(hours, now, 24))}<small>cm</small></div></div>
+    <div class="tile"><div class="k">Snow, next 72 h</div><div class="v">${fmt(sumCm(hours, now, 72))}<small>cm</small></div></div>
+    <div class="tile"><div class="k">Snow, rest of week</div><div class="v">${fmt(sumCm(hours, now, hours.length))}<small>cm</small></div></div>`;
+
+  $('hours').innerHTML = hours.slice(now, now + 24).map((x, i) => {
+    let k = kindOf(x.pic);
+    if (!x.day && k === 'sun') k = 'moon';
+    if (!x.day && k === 'partly') k = 'cloudy';
+    const label = i === 0 ? 'Now' : (x.hh === '00' ? wd(x.date) : x.hh + ':00');
+    return `<div class="hr${i === 0 ? ' now' : ''}"><span class="t">${label}</span>${icon(k)}<span class="tmp">${Math.round(x.T)}°</span><span class="sn">${x.cm >= 0.1 ? x.cm.toFixed(1) + ' cm' : ''}</span></div>`;
+  }).join('');
+
+  $('days').innerHTML = days.map(x => {
+    let kind = 'Dry', cls = '';
+    if (x.mm >= 0.5) { if (x.sf >= 0.8) { kind = 'Snow'; cls = 'snow'; } else if (x.sf >= 0.2) { kind = 'Mixed'; cls = 'mixed'; } else { kind = 'Rain'; cls = 'rain'; } }
+    return `<div class="day">
+      <div class="dayhead"><div class="d">${wd(x.date)}<span>${Number(x.date.slice(8))}</span></div>${icon(x.kind)}</div>
+      <div class="amt">${fmt(x.cm)}<small>cm</small></div>
+      <span class="pill ${cls}">${kind}</span>
+      <div class="row"><span>Water</span><b>${fmt(x.mm)} mm</b></div>
+      <div class="row"><span>Hi / lo</span><b>${Math.round(x.tmax)}°/${Math.round(x.tmin)}°</b></div>
+      <div class="row"><span>Wind</span><b>${Math.round(x.windKmh)} km/h</b></div>
+      <div class="row"><span>Reliability</span><b>${x.pred}%</b></div>
+      <div class="rel" title="meteoblue predictability"><i style="width:${x.pred}%"></i></div>
+    </div>`;
+  }).join('');
+
+  renderLimit(hours, now);
+  $('snowchart').innerHTML = snowChart(hours, now);
+  $('tempchart').innerHTML = tempChart(hours, now);
+  $('method').textContent = 'Snow in cm is an estimate: precipitation (mm) × snow fraction × a snow-to-water ratio from 8:1 at 0 °C to 16:1 at -10 °C. Real depth varies with wind and settling. Reliability is meteoblue\'s predictability for the day.';
+}
+
+// ---- charts ----
+const W = 900, PL = 44, PR = 44, H = 130;
+function frame(hours, now, H = 130) {
+  const n = hours.length, bw = (W - PL - PR) / n;
+  const x0 = i => PL + i * bw;
+  let night = '', run = -1;
+  hours.forEach((x, i) => {
+    if (!x.day && run < 0) run = i;
+    if ((x.day || i === n - 1) && run >= 0) { const end = x.day ? i : n; night += `<rect class="night" x="${x0(run).toFixed(1)}" y="0" width="${((end - run) * bw).toFixed(1)}" height="${H}"/>`; run = -1; }
+  });
+  const seps = hours.map((x, i) => x.hh === '00' ? i : -1).filter(i => i >= 0).map(i =>
+    `<line class="sep" x1="${x0(i).toFixed(1)}" x2="${x0(i).toFixed(1)}" y1="0" y2="${H}"/><text x="${(x0(i) + 3).toFixed(1)}" y="${H + 13}">${wd(hours[i].date)}</text>`).join('');
+  const nowLine = `<line class="zero" x1="${x0(now).toFixed(1)}" x2="${x0(now).toFixed(1)}" y1="0" y2="${H}" style="stroke-dasharray:none;opacity:.5"/>`;
+  return { n, bw, x0, bg: night + seps + nowLine };
+}
+
+function snowChart(hours, now) {
+  const f = frame(hours, now);
+  const hMax = Math.max(1, Math.ceil(Math.max(...hours.map(x => x.cm))));
+  let c = 0; const cum = hours.map(x => (c += x.cm));
+  const cMax = Math.max(1, Math.ceil(c));
+  const yB = v => H - (v / hMax) * (H - 8), yC = v => H - (v / cMax) * (H - 8);
+  const bars = hours.map((x, i) => {
+    const bh = H - yB(x.cm);
+    const tip = `<title>${wd(x.date)} ${x.hh}:00 · ${fmt(x.cm)} cm · ${Math.round(x.T)}°C</title>`;
+    return `<g>${bh > 0.4 ? `<rect class="bar" x="${f.x0(i).toFixed(1)}" y="${yB(x.cm).toFixed(1)}" width="${Math.max(f.bw - 0.4, 0.8).toFixed(1)}" height="${bh.toFixed(1)}"/>` : ''}<rect x="${f.x0(i).toFixed(1)}" y="0" width="${f.bw.toFixed(1)}" height="${H}" fill="transparent">${tip}</rect></g>`;
+  }).join('');
+  const line = cum.map((v, i) => `${i ? 'L' : 'M'}${(f.x0(i) + f.bw / 2).toFixed(1)},${yC(v).toFixed(1)}`).join(' ');
+  return `<svg viewBox="0 0 ${W} ${H + 18}" role="img" aria-label="Hourly estimated snowfall and running total in centimetres">
+    ${f.bg}
+    <line class="axis" x1="${PL}" x2="${W - PR}" y1="${H}" y2="${H}"/>
+    <text x="${PL - 6}" y="${H}" text-anchor="end">0</text><text x="${PL - 6}" y="10" text-anchor="end">${hMax} cm/h</text>
+    <text x="${W - PR + 6}" y="${H}">0</text><text x="${W - PR + 6}" y="10">${cMax} cm</text>
+    ${bars}<path class="cum" d="${line}"/></svg>`;
+}
+
+const zKey = iso => new Date(iso).toLocaleString('sv-SE', { timeZone: 'Europe/Zurich' }).slice(0, 13) + ':00';
+// Local Swiss clock key "YYYY-MM-DD HH:00" -> UTC milliseconds
+function zonedMs(key) {
+  const g = Date.parse(key.replace(' ', 'T').slice(0, 16) + ':00Z');
+  const shown = Date.parse(zKey(new Date(g).toISOString()).replace(' ', 'T') + ':00Z');
+  return g - (shown - g);
+}
+// Own estimate of the snowfall level from the forecast temperatures (used only beyond the end of SLF's series):
+// where a 6.5 °C/km lapse rate puts 0 °C, averaged over the available places, then shifted by the typical
+// difference to SLF's values during the hours where both exist.
+function estimateLevels(slf, minM) {
+  const locs = state.data.locations, series = [];
+  ['village', 'summit'].forEach(k => {
+    const L = locs[k];
+    if (!L || !L.metadata) return;
+    const h = prepare(L).hours, z = L.metadata.height;
+    series.push(new Map(h.map(x => [x.t.replace('T', ' ').slice(0, 13) + ':00', z + x.T / 0.0065])));
+  });
+  if (!series.length) return [];
+  const keys = [...series[0].keys()].filter(k => series.every(m => m.has(k)));
+  const raw = keys.map(k => ({ k, z: series.reduce((s, m) => s + m.get(k), 0) / series.length }));
+  const slfByKey = new Map(slf.map(p => [zKey(new Date(p.ms).toISOString()), p.m]));
+  // Use the last 12 hours where both exist, so the estimate continues smoothly from SLF's last values.
+  const diffs = raw.filter(r => slfByKey.has(r.k)).map(r => slfByKey.get(r.k) - r.z).slice(-12).sort((a, b) => a - b);
+  const off = diffs.length >= 4 ? diffs[Math.floor(diffs.length / 2)] : -250;
+  return raw.map(r => ({ ms: zonedMs(r.k), m: Math.min(4500, Math.max(minM || 0, Math.round(r.z + off))), est: true }));
+}
+
+function renderLimit() {
+  const b = state.data.bulletin, box = $('lim');
+  const minM = (b && b.region_min) || 0;
+  const slf = ((b && b.snowfall_limit) || []).map(p => ({ ms: Date.parse(p.t), m: p.below ? minM : p.m, below: p.below })).filter(p => Number.isFinite(p.ms) && p.m != null);
+  if (slf.length < 2) { box.hidden = true; return; }
+  box.hidden = false;
+  const H = 230, HR = 36e5, nowMs = Date.now();
+  // Window: 12 h back, 3 days ahead. SLF's own series ends about one day after the bulletin was issued.
+  const slfEnd = slf[slf.length - 1].ms;
+  const est = estimateLevels(slf, minM).filter(p => p.ms > slfEnd && p.ms <= nowMs + 72 * HR);
+  const t0 = Math.max(slf[0].ms, Math.min(nowMs, slfEnd) - 12 * HR);
+  const P = slf.filter(p => p.ms >= t0);
+  const t1 = est.length ? est[est.length - 1].ms : slfEnd;
+  const span = Math.max(t1 - t0, HR);
+  const X = ms => PL + ((ms - t0) / span) * (W - PL - PR);
+  const loc = state.data.locations;
+  const refs = ['village', 'summit'].filter(k => loc[k] && loc[k].metadata).map(k => ({ m: loc[k].metadata.height, name: LOCS[k] }));
+  const nums = [...P, ...est].map(p => p.m), top = Math.max(...nums);
+  const shown = refs.filter(r => r.m <= top + 500);
+  const lo = Math.floor(Math.min(...nums, minM || Infinity, ...shown.map(r => r.m)) / 200) * 200;
+  const hi = Math.ceil(Math.max(...nums, ...shown.map(r => r.m)) / 200) * 200 + 200;
+  const y = v => H - ((v - lo) / (hi - lo)) * (H - 8);
+  // Day boundaries (Swiss midnight) and one label per day, centred on its part of the chart.
+  const mids = [];
+  for (let ms = Math.ceil(t0 / HR) * HR; ms <= t1; ms += HR) if (zKey(new Date(ms).toISOString()).slice(11, 13) === '00') mids.push(ms);
+  const edges = [t0, ...mids, t1];
+  let days = '';
+  for (let i = 0; i < edges.length - 1; i++) {
+    const a = edges[i], z = edges[i + 1];
+    if (i % 2 === 0) days += `<rect class="night" x="${X(a).toFixed(1)}" y="0" width="${(X(z) - X(a)).toFixed(1)}" height="${H}"/>`;
+    if (X(z) - X(a) < 90) continue;
+    const key = zKey(new Date((a + z) / 2).toISOString());
+    days += `<text x="${((X(a) + X(z)) / 2).toFixed(1)}" y="${H + 20}" text-anchor="middle" style="fill:var(--ink)">${wd(key.slice(0, 10))} ${Number(key.slice(8, 10))}</text>`;
+  }
+  const seps = mids.map(ms => `<line class="sep" x1="${X(ms).toFixed(1)}" x2="${X(ms).toFixed(1)}" y1="0" y2="${H}"/>`).join('');
+  const nowLine = nowMs >= t0 && nowMs <= t1 ? `<line class="zero" x1="${X(nowMs).toFixed(1)}" x2="${X(nowMs).toFixed(1)}" y1="0" y2="${H}" style="stroke-dasharray:none;opacity:.6"/><text x="${(X(nowMs) + 5).toFixed(1)}" y="${H - 6}">now</text>` : '';
+  const line = pts => pts.map((p, i) => `${i === 0 || p.ms - pts[i - 1].ms > 1.5 * HR ? 'M' : 'L'}${X(p.ms).toFixed(1)},${y(p.m).toFixed(1)}`).join(' ');
+  const dSlf = line(P);
+  const dEst = est.length ? line([P[P.length - 1], ...est]) : '';
+  const bw = Math.max((W - PL - PR) * HR / span, 2);
+  const hover = [...P, ...est].map(p => { const k = zKey(new Date(p.ms).toISOString()); return `<rect x="${(X(p.ms) - bw / 2).toFixed(1)}" y="0" width="${bw.toFixed(1)}" height="${H}" fill="transparent"><title>${wd(k.slice(0, 10))} ${k.slice(11, 13)}:00 \u00b7 ${p.below ? 'below ' + minM + ' m (lowest point of the region)' : p.m + ' m'}${p.est ? ' (estimate)' : ''}</title></rect>`; }).join('');
+  const refLines = shown.map(r => `<line class="ref" x1="${PL}" x2="${W - PR}" y1="${y(r.m).toFixed(1)}" y2="${y(r.m).toFixed(1)}"/><text x="${W - PR - 4}" text-anchor="end" y="${(y(r.m) - 5).toFixed(1)}">${esc(r.name)} ${r.m} m</text>`).join('');
+  const minLine = minM ? `<line class="refmin" x1="${PL}" x2="${W - PR}" y1="${y(minM).toFixed(1)}" y2="${y(minM).toFixed(1)}"/>` : '';
+  $('limchart').innerHTML = `<svg viewBox="0 0 ${W} ${H + 30}" role="img" aria-label="Snowfall level in metres, last half day and next three days">
+    ${days}${seps}${nowLine}
+    <line class="axis" x1="${PL}" x2="${W - PR}" y1="${H}" y2="${H}"/>
+    <text x="${PL + 4}" y="${H - 6}">${lo} m</text><text x="${PL + 4}" y="20">${hi} m</text>
+    ${minLine}${refLines}<path class="lim" d="${dSlf}"/>${dEst ? `<path class="lim est" d="${dEst}"/>` : ''}${hover}</svg>`;
+  const cur = P.reduce((best, p) => Math.abs(p.ms - nowMs) < Math.abs(best.ms - nowMs) ? p : best, P[0]);
+  const inRange = nowMs >= t0 - HR && nowMs <= slfEnd + HR;
+  $('lim-now').innerHTML = `${cur.below ? 'Below ' + minM : cur.m}<small>m, ${inRange ? 'now' : 'latest SLF value'}</small>`;
+  $('lim-legend-est').hidden = !dEst;
+  $('lim-note').innerHTML = `Height where half the precipitation falls as snow and half as rain, for the whole region ${esc(b.name)}. Solid line: SLF's calculation (MeteoSwiss ICON-CH1, KENDA-CH1 for the past), which covers the time up to about 17:00 on the day after the latest bulletin; newer values arrive with each bulletin. ${dEst ? 'Dashed line: our own rough estimate for the following days, worked out from the meteoblue temperature forecast and adjusted to match SLF where both exist. Treat it as a trend, not as an official value. ' : ''}Dotted line near the bottom: lowest point of the region in the weather model${minM ? ` (${minM} m)` : ''}; when the level is lower, all precipitation falls as snow. Source: <a href="https://www.slf.ch" target="_blank" rel="noopener">SLF</a> (CC BY 4.0).`;
+}
+
+function tempChart(hours, now) {
+  const f = frame(hours, now);
+  const all = hours.flatMap(x => [x.T, x.felt]);
+  let lo = Math.floor(Math.min(...all, 0) / 2) * 2, hi = Math.ceil(Math.max(...all, 0) / 2) * 2;
+  if (hi - lo < 6) hi = lo + 6;
+  const y = v => H - ((v - lo) / (hi - lo)) * (H - 8) - 0;
+  const path = key => hours.map((x, i) => `${i ? 'L' : 'M'}${(f.x0(i) + f.bw / 2).toFixed(1)},${y(x[key]).toFixed(1)}`).join(' ');
+  const hover = hours.map((x, i) => `<rect x="${f.x0(i).toFixed(1)}" y="0" width="${f.bw.toFixed(1)}" height="${H}" fill="transparent"><title>${wd(x.date)} ${x.hh}:00 · ${x.T.toFixed(1)}°C, feels ${x.felt.toFixed(1)}°C</title></rect>`).join('');
+  return `<svg viewBox="0 0 ${W} ${H + 18}" role="img" aria-label="Hourly temperature in degrees Celsius">
+    ${f.bg}
+    <line class="axis" x1="${PL}" x2="${W - PR}" y1="${H}" y2="${H}"/>
+    <text x="${PL - 6}" y="${H}" text-anchor="end">${lo}°</text><text x="${PL - 6}" y="10" text-anchor="end">${hi}°</text>
+    <line class="zero" x1="${PL}" x2="${W - PR}" y1="${y(0).toFixed(1)}" y2="${y(0).toFixed(1)}"/>
+    <text class="zerotxt" x="${W - PR + 6}" y="${(y(0) + 3).toFixed(1)}">0°</text>
+    <path class="felt" d="${path('felt')}"/><path class="temp" d="${path('T')}"/>${hover}</svg>`;
+}
+
+init();
+</script>
+</body>
+</html>
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Grimentz Snow</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+:root {
+  /* Layout: header + elevation toggle, four summary tiles, seven day cards, hourly snow and temperature charts. */
+  --bg: #f1f5f9;
+  --surface: #ffffff;
+  --ink: #13202d;
+  --muted: #5a6b7c;
+  --line: #d9e2ea;
+  --accent: #1d6db0;
+  --accent-ink: #ffffff;
+  --rain: #b15609;
+  --night: rgba(19, 32, 45, 0.06);
+  --sun: #d98a00;
+  --drop: #3b7fc4;
+  --d1: #6cbf3a; --d2: #ffe21a; --d3: #ff9a1f; --d4: #e53935; --d5: #b71c1c;
+  --cloud: #8fa3b5;
+  --font-body: 'IBM Plex Sans', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --font-num: 'IBM Plex Mono', ui-monospace, Menlo, Consolas, monospace;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0d1520; --surface: #15212e; --ink: #e5edf5; --muted: #91a3b5; --line: #25354a;
+    --accent: #5aa9e6; --accent-ink: #06121e; --rain: #f0a35a; --night: rgba(255, 255, 255, 0.05); --sun: #f5b94a; --drop: #7db4ee; --cloud: #7d90a3;
+    color-scheme: dark;
+  }
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+body { background: var(--bg); color: var(--ink); font-family: var(--font-body); font-size: 15px; line-height: 1.45; }
+main { max-width: 1000px; margin: 0 auto; padding: 24px 16px 48px; display: flex; flex-direction: column; gap: 20px; }
+h1 { font-size: 26px; line-height: 1.15; margin: 0; font-weight: 600; }
+h2 { font-size: 14px; font-weight: 500; color: var(--muted); margin: 0 0 8px; }
+.sub { color: var(--muted); margin: 4px 0 0; font-size: 14px; }
+header { display: flex; flex-wrap: wrap; gap: 16px; align-items: flex-end; justify-content: space-between; }
+.seg { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; background: var(--surface); }
+.seg button { font: inherit; font-size: 13px; padding: 8px 14px; border: 0; border-right: 1px solid var(--line); background: transparent; color: var(--ink); cursor: pointer; }
+.seg button:last-child { border-right: 0; }
+.seg button[aria-pressed="true"] { background: var(--accent); color: var(--accent-ink); font-weight: 500; }
+button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+.tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 12px; }
+.tile { background: var(--surface); border: 1px solid var(--line); border-left: 4px solid var(--accent); border-radius: 10px; padding: 12px 16px; }
+.tile .k { color: var(--muted); font-size: 13px; }
+.tile .v { font-family: var(--font-num); font-size: 26px; font-weight: 500; margin-top: 2px; font-variant-numeric: tabular-nums; }
+.tile .v small { font-family: var(--font-body); font-size: 13px; color: var(--muted); font-weight: 400; margin-left: 4px; }
+
+.notice { font-size: 13px; color: var(--muted); }
+.notice.warn { color: var(--rain); }
+
+.days { display: grid; grid-template-columns: repeat(7, minmax(112px, 1fr)); gap: 10px; overflow-x: auto; padding-bottom: 4px; }
+.day { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 12px; display: flex; flex-direction: column; gap: 6px; }
+.day .d { font-weight: 500; }
+.day .d span { color: var(--muted); font-weight: 400; margin-left: 4px; }
+.day .amt { font-family: var(--font-num); font-size: 28px; font-weight: 500; line-height: 1.1; font-variant-numeric: tabular-nums; }
+.day .amt small { font-size: 12px; color: var(--muted); margin-left: 3px; font-family: var(--font-body); }
+.day .row span { white-space: nowrap; }
+.day .row { display: flex; justify-content: space-between; gap: 6px; font-size: 13px; color: var(--muted); }
+.day .row b { white-space: nowrap; color: var(--ink); font-weight: 500; font-family: var(--font-num); font-variant-numeric: tabular-nums; }
+.ico { width: 34px; height: 34px; flex: none; }
+.ico .c { fill: var(--surface); stroke: var(--cloud); stroke-width: 1.6; stroke-linejoin: round; }
+.ico .s { fill: none; stroke: var(--sun); stroke-width: 1.8; stroke-linecap: round; }
+.ico .sf { fill: var(--sun); stroke: none; }
+.ico .d { fill: none; stroke: var(--drop); stroke-width: 2; stroke-linecap: round; }
+.ico .f { fill: none; stroke: var(--accent); stroke-width: 1.6; stroke-linecap: round; }
+.ico .m { fill: none; stroke: var(--cloud); stroke-width: 1.8; stroke-linecap: round; }
+.ico .b { fill: var(--sun); stroke: none; }
+.dayhead { display: flex; align-items: center; justify-content: space-between; gap: 6px; }
+.tile .v.withico { display: flex; align-items: center; gap: 10px; }
+.tile .v.withico .ico { width: 38px; height: 38px; }
+.pill { align-self: flex-start; font-size: 11px; font-weight: 600; padding: 1px 8px; border-radius: 999px; border: 1px solid var(--line); color: var(--muted); }
+.pill.snow { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+.pill.mixed { border-color: var(--rain); color: var(--rain); }
+.pill.rain { background: var(--rain); border-color: var(--rain); color: var(--surface); }
+.rel { height: 5px; background: var(--line); border-radius: 3px; overflow: hidden; }
+.rel i { display: block; height: 100%; background: var(--accent); }
+
+.panel { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px 10px; }
+.panel svg { width: 100%; height: auto; display: block; }
+.panel text { fill: var(--muted); font-family: var(--font-num); font-size: 10px; }
+.panel .axis { stroke: var(--line); stroke-width: 1; }
+.panel .night { fill: var(--night); }
+.panel .sep { stroke: var(--line); stroke-dasharray: 2 3; }
+.panel .bar { fill: var(--accent); }
+.panel .cum { fill: none; stroke: var(--ink); stroke-width: 1.5; }
+.panel .temp { fill: none; stroke: var(--accent); stroke-width: 1.8; }
+.panel .felt { fill: none; stroke: var(--muted); stroke-width: 1; stroke-dasharray: 3 3; }
+.panel .zero { stroke: var(--rain); stroke-width: 1.1; stroke-dasharray: 4 3; }
+.panel .zerotxt { fill: var(--rain); }
+.legend { display: flex; flex-wrap: wrap; gap: 14px; font-size: 12px; color: var(--muted); margin: 0 0 6px; }
+.legend i { display: inline-block; width: 12px; height: 8px; margin-right: 5px; vertical-align: 0; border-radius: 2px; }
+.foot { color: var(--muted); font-size: 13px; display: flex; flex-direction: column; gap: 6px; }
+.foot a { color: var(--accent); }
+.err { color: var(--rain); }
+.obs-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 10px; }
+.obs-head h2 { margin: 0; }
+.pill.manual { background: transparent; border-color: var(--accent); color: var(--accent); }
+.obs-body { display: grid; grid-template-columns: minmax(220px, 1fr) 2fr; gap: 20px; align-items: end; }
+.obs-stats { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.obs-stats div { display: flex; flex-direction: column; }
+.obs-stats .n { font-family: var(--font-num); font-size: 26px; font-weight: 500; line-height: 1.1; font-variant-numeric: tabular-nums; }
+.obs-stats .n small { font-family: var(--font-body); font-size: 12px; color: var(--muted); font-weight: 400; margin-left: 3px; }
+.obs-stats .l { font-size: 12px; color: var(--muted); }
+.obs-cols { display: grid; grid-template-columns: repeat(7, 1fr); gap: 8px; align-items: end; }
+.ocol { display: flex; flex-direction: column; align-items: center; justify-content: flex-end; gap: 3px; font-family: var(--font-num); font-variant-numeric: tabular-nums; font-size: 12px; }
+.obar { width: 70%; max-width: 38px; min-height: 2px; background: var(--accent); border-radius: 3px 3px 0 0; }
+.oval { font-weight: 500; }
+.odate { color: var(--muted); font-family: var(--font-body); }
+.ohs { color: var(--muted); border-top: 1px solid var(--line); padding-top: 3px; width: 100%; text-align: center; }
+.obs-legend { color: var(--muted); font-size: 12px; margin: 0 0 6px; }
+.obs-note { color: var(--muted); font-size: 13px; margin: 12px 0 0; }
+.obs-note a, .obs-warn a { color: var(--accent); }
+.obs-link { font-weight: 500; margin-bottom: 0; }
+.obs-warn { color: var(--rain); font-size: 13px; margin: 8px 0 0; }
+.bul-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 10px; }
+.bul-head h2 { margin: 0; }
+.pill.official { background: transparent; border-color: var(--rain); color: var(--rain); }
+.bul-rating { display: flex; align-items: center; gap: 14px; margin: 6px 0; }
+.badge { min-width: 58px; height: 58px; padding: 0 8px; border-radius: 10px; display: flex; align-items: center; justify-content: center; font-family: var(--font-num); font-size: 28px; font-weight: 500; color: #13202d; flex: none; }
+.badge.l4, .badge.l5 { color: #fff; }
+.bul-word { font-size: 18px; font-weight: 600; }
+.bul-sub { color: var(--muted); font-size: 13px; }
+.bul-valid { color: var(--muted); font-size: 13px; margin: 8px 0 12px; }
+.probs { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 10px; margin-bottom: 10px; }
+.prob { border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; display: grid; grid-template-columns: 1fr 64px; gap: 4px 10px; align-items: start; }
+.prob h3 { margin: 0; font-size: 14px; font-weight: 600; }
+.prob .el { color: var(--muted); font-size: 12px; margin-top: 2px; }
+.prob .lv { display: inline-block; font-size: 11px; font-weight: 600; padding: 1px 7px; border-radius: 999px; color: #13202d; margin-top: 4px; }
+.prob .lv.l4, .prob .lv.l5 { color: #fff; }
+.prob svg { width: 64px; height: 64px; grid-row: 1 / span 2; grid-column: 2; }
+.prob p { grid-column: 1 / -1; margin: 4px 0 0; font-size: 13px; color: var(--muted); white-space: pre-line; }
+.bul details { border-top: 1px solid var(--line); padding: 8px 0; }
+.bul summary { cursor: pointer; font-weight: 500; font-size: 14px; }
+.bul details p { margin: 6px 0 2px; font-size: 13.5px; white-space: pre-line; }
+.bul-cta { display: block; margin: 14px 0 6px; padding: 14px 16px; background: #ffe21a; color: #13202d !important; font-weight: 600; font-size: 16px; text-align: center; text-decoration: none; border-radius: 10px; border: 2px solid #13202d1a; }
+.bul-cta:hover, .bul-cta:focus-visible { background: #ffd000; }
+.hours { display: flex; gap: 6px; overflow-x: auto; padding: 2px 0 8px; scroll-snap-type: x proximity; }
+.hr { flex: 0 0 62px; scroll-snap-align: start; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 8px 4px; display: flex; flex-direction: column; align-items: center; gap: 4px; font-family: var(--font-num); font-variant-numeric: tabular-nums; font-size: 13px; }
+.hr.now { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
+.hr .t { color: var(--muted); font-size: 12px; }
+.hr .tmp { font-weight: 500; font-size: 15px; }
+.hr .sn { color: var(--accent); font-size: 11px; min-height: 14px; }
+.hr svg { width: 28px; height: 28px; }
+.hr .dl { color: var(--ink); font-family: var(--font-body); font-size: 11px; font-weight: 600; }
+.panel .lim { fill: none; stroke: var(--drop); stroke-width: 2; }
 .panel .ref { stroke: var(--muted); stroke-width: 1; stroke-dasharray: 2 3; }
 .panel .refmin { stroke: var(--muted); stroke-width: 1; stroke-dasharray: 1 3; opacity: .8; }
 #limchart .panel text, #limchart text { font-size: 19px; }
