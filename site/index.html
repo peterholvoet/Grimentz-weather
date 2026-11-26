@@ -198,7 +198,7 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   <section class="panel" id="lim" aria-label="Snowfall level" hidden>
     <h2>Snowfall level</h2>
     <div class="snow-now" id="lim-now"></div>
-    <div class="legend"><span><i style="background:var(--drop)"></i>Snowfall level (m)</span><span><i style="background:var(--muted)"></i>Orée and Orzival</span><span><i style="background:var(--night)"></i>Night</span></div>
+    <div class="legend"><span><i style="background:var(--drop)"></i>Snowfall level (m)</span><span><i style="background:var(--muted)"></i>Orée and Orzival</span></div>
     <div id="limchart"></div>
     <p class="obs-note" id="lim-note"></p>
   </section>
@@ -210,7 +210,7 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
     <span>Snow measurements: <a href="https://www.slf.ch" target="_blank" rel="noopener">WSL Institute for Snow and Avalanche Research SLF</a> (open data, CC BY 4.0).</span>
     <span id="method"></span>
     <span>The avalanche bulletin is a regional warning, not a local assessment. Check conditions before leaving the piste.</span>
-    <span>Forecast data from <a href="https://www.meteoblue.com/nl/weer/week/grimentz_zwitserland_2660504="_blank" rel="noopener">meteoblue</a>, used for a non-commercial project.</span>
+    <span>Forecast data from <a href="https://www.meteoblue.com/nl/weer/week/grimentz_zwitserland_2660504"_blank" rel="noopener">meteoblue</a>, used for a non-commercial project.</span>
   </div>
 </main>
 
@@ -519,41 +519,55 @@ function snowChart(hours, now) {
 }
 
 const zKey = iso => new Date(iso).toLocaleString('sv-SE', { timeZone: 'Europe/Zurich' }).slice(0, 13) + ':00';
-function renderLimit(allHours, allNow) {
+function renderLimit() {
   const b = state.data.bulletin, box = $('lim');
-  const pts = (b && b.snowfall_limit) || [];
   const minM = (b && b.region_min) || 0;
-  const byKey = new Map(pts.map(p => [zKey(p.t), p.below ? { m: minM, below: true } : { m: p.m, below: false }]));
-  const allVals = allHours.map(x => byKey.get(x.t.replace('T', ' ')) || null);
-  const first = allVals.findIndex(Boolean), last = allVals.length - 1 - [...allVals].reverse().findIndex(Boolean);
-  if (first < 0) { box.hidden = true; return; }
-  // Show at most 3 days: from 12 h before now (or the first value) to 72 h later (or the last value).
-  const s0 = Math.max(first, allNow - 12), e0 = Math.min(last, s0 + 71);
-  const hours = allHours.slice(s0, e0 + 1), vals = allVals.slice(s0, e0 + 1);
-  const now = Math.min(Math.max(allNow - s0, 0), hours.length - 1);
+  let P = ((b && b.snowfall_limit) || []).map(p => ({ ms: Date.parse(p.t), m: p.below ? minM : p.m, below: p.below })).filter(p => Number.isFinite(p.ms) && p.m != null);
+  if (P.length < 2) { box.hidden = true; return; }
   box.hidden = false;
+  const H = 230, HR = 36e5;
+  // The bulletin carries about three days of hourly values (past two days plus the coming day). Show at most 72 h.
+  const t1 = P[P.length - 1].ms;
+  P = P.filter(p => p.ms >= t1 - 72 * HR);
+  const t0 = P[0].ms, span = Math.max(t1 - t0, HR);
+  const X = ms => PL + ((ms - t0) / span) * (W - PL - PR);
   const loc = state.data.locations;
   const refs = ['village', 'summit'].filter(k => loc[k] && loc[k].metadata).map(k => ({ m: loc[k].metadata.height, name: LOCS[k] }));
-  const nums = vals.filter(Boolean).map(v => v.m);
-  const top = Math.max(...nums);
+  const nums = P.map(p => p.m), top = Math.max(...nums);
   const shown = refs.filter(r => r.m <= top + 500);
   const lo = Math.floor(Math.min(...nums, minM || Infinity, ...shown.map(r => r.m)) / 200) * 200;
   const hi = Math.ceil(Math.max(...nums, ...shown.map(r => r.m)) / 200) * 200 + 200;
-  const H = 230, f = frame(hours, now, H);
   const y = v => H - ((v - lo) / (hi - lo)) * (H - 8);
-  let d = '', gap = true;
-  vals.forEach((v, i) => { if (!v) { gap = true; return; } d += `${gap ? 'M' : 'L'}${(f.x0(i) + f.bw / 2).toFixed(1)},${y(v.m).toFixed(1)} `; gap = false; });
-  const hover = vals.map((v, i) => v ? `<rect x="${f.x0(i).toFixed(1)}" y="0" width="${f.bw.toFixed(1)}" height="${H}" fill="transparent"><title>${wd(hours[i].date)} ${hours[i].hh}:00 · ${v.below ? 'below ' + minM + ' m (lowest point of the region)' : v.m + ' m'}</title></rect>` : '').join('');
+  // Day boundaries (Swiss midnight) and one label per day, centred on its part of the chart.
+  const mids = [];
+  for (let ms = Math.ceil(t0 / HR) * HR; ms <= t1; ms += HR) if (zKey(new Date(ms).toISOString()).slice(11, 13) === '00') mids.push(ms);
+  const edges = [t0, ...mids, t1];
+  let days = '';
+  for (let i = 0; i < edges.length - 1; i++) {
+    const a = edges[i], z = edges[i + 1];
+    if (i % 2 === 0) days += `<rect class="night" x="${X(a).toFixed(1)}" y="0" width="${(X(z) - X(a)).toFixed(1)}" height="${H}"/>`;
+    if (X(z) - X(a) < 90) continue;
+    const key = zKey(new Date((a + z) / 2).toISOString());
+    days += `<text x="${((X(a) + X(z)) / 2).toFixed(1)}" y="${H + 20}" text-anchor="middle" style="fill:var(--ink)">${wd(key.slice(0, 10))} ${Number(key.slice(8, 10))}</text>`;
+  }
+  const seps = mids.map(ms => `<line class="sep" x1="${X(ms).toFixed(1)}" x2="${X(ms).toFixed(1)}" y1="0" y2="${H}"/>`).join('');
+  const nowMs = Date.now();
+  const nowLine = nowMs >= t0 && nowMs <= t1 ? `<line class="zero" x1="${X(nowMs).toFixed(1)}" x2="${X(nowMs).toFixed(1)}" y1="0" y2="${H}" style="stroke-dasharray:none;opacity:.6"/><text x="${(X(nowMs) + 5).toFixed(1)}" y="${H - 6}">now</text>` : '';
+  let d = '';
+  P.forEach((p, i) => { d += `${i === 0 || p.ms - P[i - 1].ms > 1.5 * HR ? 'M' : 'L'}${X(p.ms).toFixed(1)},${y(p.m).toFixed(1)} `; });
+  const bw = Math.max((W - PL - PR) * HR / span, 2);
+  const hover = P.map(p => { const k = zKey(new Date(p.ms).toISOString()); return `<rect x="${(X(p.ms) - bw / 2).toFixed(1)}" y="0" width="${bw.toFixed(1)}" height="${H}" fill="transparent"><title>${wd(k.slice(0, 10))} ${k.slice(11, 13)}:00 \u00b7 ${p.below ? 'below ' + minM + ' m (lowest point of the region)' : p.m + ' m'}</title></rect>`; }).join('');
   const refLines = shown.map(r => `<line class="ref" x1="${PL}" x2="${W - PR}" y1="${y(r.m).toFixed(1)}" y2="${y(r.m).toFixed(1)}"/><text x="${W - PR - 4}" text-anchor="end" y="${(y(r.m) - 5).toFixed(1)}">${esc(r.name)} ${r.m} m</text>`).join('');
   const minLine = minM ? `<line class="refmin" x1="${PL}" x2="${W - PR}" y1="${y(minM).toFixed(1)}" y2="${y(minM).toFixed(1)}"/>` : '';
-  $('limchart').innerHTML = `<svg viewBox="0 0 ${W} ${H + 26}" role="img" aria-label="Hourly snowfall level in metres">
-    ${f.bg}
+  $('limchart').innerHTML = `<svg viewBox="0 0 ${W} ${H + 30}" role="img" aria-label="Snowfall level in metres over about three days">
+    ${days}${seps}${nowLine}
     <line class="axis" x1="${PL}" x2="${W - PR}" y1="${H}" y2="${H}"/>
     <text x="${PL + 4}" y="${H - 6}">${lo} m</text><text x="${PL + 4}" y="20">${hi} m</text>
     ${minLine}${refLines}<path class="lim" d="${d}"/>${hover}</svg>`;
-  const cur = vals[now] || vals.find(Boolean);
-  $('lim-now').innerHTML = cur ? `${cur.below ? 'Below ' + minM : cur.m}<small>m, ${vals[now] ? 'now' : 'latest value'}</small>` : '';
-  $('lim-note').innerHTML = `Height where half the precipitation falls as snow and half as rain, for the whole region ${esc(b.name)}. Dotted line near the bottom: lowest point of the region in the weather model${minM ? ` (${minM} m)` : ''}; when the level is lower, all precipitation falls as snow. Data: MeteoSwiss ICON-CH1 (KENDA-CH1 for the past), calculated by <a href="https://www.slf.ch" target="_blank" rel="noopener">SLF</a> when each bulletin is prepared (CC BY 4.0), so it updates with the bulletin, not every hour.`;
+  const cur = P.reduce((best, p) => Math.abs(p.ms - nowMs) < Math.abs(best.ms - nowMs) ? p : best, P[0]);
+  const inRange = nowMs >= t0 - HR && nowMs <= t1 + HR;
+  $('lim-now').innerHTML = `${cur.below ? 'Below ' + minM : cur.m}<small>m, ${inRange ? 'now' : 'latest value'}</small>`;
+  $('lim-note').innerHTML = `Height where half the precipitation falls as snow and half as rain, for the whole region ${esc(b.name)}. Shows the roughly three days of values in the latest bulletin (past days and the coming day); newer values arrive with the next bulletin. Shaded bands alternate by day. Dotted line near the bottom: lowest point of the region in the weather model${minM ? ` (${minM} m)` : ''}; when the level is lower, all precipitation falls as snow. Data: MeteoSwiss ICON-CH1 (KENDA-CH1 for the past), calculated by <a href="https://www.slf.ch" target="_blank" rel="noopener">SLF</a> when each bulletin is prepared (CC BY 4.0), so it updates with the bulletin, not every hour.`;
 }
 
 function tempChart(hours, now) {
